@@ -9,6 +9,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from discord.ext import commands
 from subprocess import call
+from praw.models.util import BoundedSet
 
 # Loads up the configparser to read our login file
 config = configparser.ConfigParser()
@@ -208,25 +209,28 @@ async def flair_helper_bot(redditlogin):
     flairdict = {}
     fditerator = 1
 
-    removalreason = "Your post does not have a flair.  You can assign flair to the post and " \
+    removalreason = "Your post does not have a flair.  You can assign flair to your post and " \
                     "I'll approve it, or you can reply to this comment with the following " \
-                    "and I'll flair the post for you and approve it:\n\n"
+                    "and I'll flair the post for you and approve it.\n\n" \
+                    "Reply with this | Flair/Category\n" \
+                    ":-------:|----------\n"
     footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
-                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=My removed submission&message=I'm writing to you about the following submission: https://old.reddit.com/r/EscapefromTarkov/comments/hwjcc9/-/. %0D%0DMy issue is...)*"
+                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT error&message=I'm writing to you about the following submission: https://old.reddit.com/r/EscapefromTarkov/comments/hwjcc9/-/. %0D%0D ShturmanBOT has removed my post by mistake)*"
 
     flairmsg = ""
     for flair in redditlogin.subreddit(subreddit_name).flair.link_templates:
         flairdict[f'flair{fditerator}'] = flair['text']
         flairdict[f'flair{fditerator}class'] = flair['css_class']
         flairtext = flair['text']
-        flairmsg += f'!flair{fditerator} --- {flairtext}\n\n'
+        flairmsg += f'!flair{fditerator}|```{flairtext}```\n'
         fditerator += 1
 
     while fhblooper:
-        submissions = redditlogin.subreddit(subreddit_name).new(limit=15)
-        for submission in submissions:
+        submissions = redditlogin.subreddit(subreddit_name).new(limit=15)  # Grab the newest 15 submissions
+        for submission in submissions:  # Loop through each one
             if str(submission.link_flair_text).lower() == 'none':
                 print('Caught a post!', submission.title, submission.link_flair_text)
+                fhbtime = datetime.datetime.utcnow()
                 greeting = "{0} {1}!, \n\n".format(randhello, submission.author)
                 commentremovalmsg = greeting + removalreason + flairmsg + footermsg  # Construct removal message
                 submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
@@ -235,35 +239,53 @@ async def flair_helper_bot(redditlogin):
                 sentmsgs = redditlogin.redditor("ShturmanBOT").comments.new(limit=1)
                 for message in sentmsgs:
                     sentmsg = message.id
-                datatoadd = [submission.title, submission.id, sentmsg, submission.permalink]
+                datatoadd = [submission.title, submission.id, sentmsg, submission.permalink, fhbtime]
                 adddata(modposts, datatoadd, True)
 
         # Now check previous submissions to see if they've been flaired
         allmodposts = modposts.get_all_records()  # Get a list of all post Mod actions have been performed on
+        deletedthings = False
         print('Checking previously modded posts for updates.')
         for modaction in allmodposts:
             posthistory = modaction['ID']
             commenthistory = modaction['Comment']
+            modtime = modaction['Time']
             prevsubission = redditlogin.submission(posthistory)
             try:
                 deletecheck = str(prevsubission.author.name)
                 print(deletecheck)
-                if str(prevsubission.link_flair_text).lower() != 'none':
-                    print("Passed the if loop")
+                rightnow = datetime.datetime.utcnow()
+                delta = datetime.timedelta(seconds=1200)
+                cutofftime = rightnow - delta
+                if str(prevsubission.link_flair_text).lower() != 'none':  # Checks to see if there's any flair.
                     prevsubission.mod.approve()
                     redditlogin.comment(commenthistory).delete()
                     removedata(modposts, commenthistory)
                     redditlogin.submission(posthistory).report("FHB Approved - Need content check!")
+                elif modtime > cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
+                    print("Time exceeded on the post, removing and leaving comment")
+                    editpost = redditlogin.comment(commenthistory)  # Get the comment to edit
+                    newbody = "Sorry, your recent post still does not have any flair and was " \
+                              "permanently removed. Feel free to resubmit your post and remember " \
+                              "to flair it once it is posted."
+                    newpost = newbody + footermsg
+                    editpost.edit(newpost)
+                    removedata(modposts, commenthistory)
+                    deletedthings = True
                 else:
                     continue
             except:
                 # Deleted post, remove from mod action history
                 print('User deleted post, doing cleanup...')
                 removedata(modposts, commenthistory)
+                deletedthings = True
 
         print("Finished searching for post flairs.  Checking inbox")
 
-        for item in redditlogin.inbox.unread(limit=None):
+        if deletedthings:
+            allmodposts = modposts.get_all_records()  # Update our list because we've deleted things.
+
+        for item in redditlogin.inbox.unread(limit=None):  # Loop through each item in our inbox
             if item.subreddit == subreddit_name and item.type == 'comment_reply':  # Check to see if comment reply is in modded subreddit
                 commenthistory = str(item.parent_id).split("_")[1]
                 for modactions in allmodposts:
@@ -283,10 +305,13 @@ async def flair_helper_bot(redditlogin):
                             # Report the post so it shows up in modqueue.
                             redditlogin.submission(posthistory).report("FHB Approved - Need content check!")
                             item.mark_read()  # Marks the comment reply as read so we don't act on it in the future
+                    else:  # Ignore the message as we don't care about it.
+                        item.mark_read()
+
         print("Finished checking for flairs, going to sleep")
         await asyncio.sleep(fhbinterval)
     if not fhblooper:
-        print('FHB has been halted!')
+        shturmanlog('Info', 'FHB has been halted!')
 
 
 #  Need to ensure that we aren't going back and reporting on prior items.  Maybe short interval + same sleep time?
@@ -350,6 +375,39 @@ async def dupe_mod_log():
     else:
         print('Dupemodlog has been halted!')
 
+
+async def rule_5_checker(redditlogin):
+    global rule5loop
+    newids = BoundedSet(100)  # PRAW set functionality.  Creates a set and boots out old data as needed.
+    urlmatch = ["youtube.com", "twitch.tv"]
+    rule5loop = True
+
+    while rule5loop:  # Create a loop so we can exit out of this via Discord command
+        submissions = redditlogin.subreddit(subreddit_name).new(limit=15)  # Grab the newest 15 submissions
+
+        StartRunTime = datetime.datetime.utcnow()  # Establish current run time to compare 2 day cutoff date to
+        delta = datetime.timedelta(days=2)
+        timecutoff = StartRunTime - delta
+
+        for submission in submissions:  # Loop through each user submission
+            if submission.id in newids:  # Checks to see if our item is in the set we've built
+                continue  # It has found a match, so continue to the next submission in the for loop
+
+            newids.add(submission.id)  # We haven't found a match above, so add it to the BoundedSet for next time
+            for url in urlmatch:  # Loop through youtube & twitch to see if we've got youtube/twitch submissions
+                if url in submission.url:  # Finds a match
+                    print("Match found!", submission.url)
+                    subauthor = submission.author  # Grabs the author.  We want to check their history
+                    for userhistory in redditlogin.redditor(str(subauthor)).submissions.new(limit=10):  # Create a user object and check their post history
+                        # Checks to see if submissions are in our subreddit
+                        # If they are, make sure the domain matches twitch or youtube
+                        if userhistory.subreddit_name_prefixed == 'r/EFTDesign' and userhistory.domain == 'twitch.tv' or userhistory.domain == 'youtube.com':
+                            # Make sure that our 2 day cutoff is observed.
+                            # We also want to make sure we're not matching against the original submission.  Compare history with our original permalink
+                            if timecutoff < datetime.datetime.fromtimestamp(userhistory.created_utc) and userhistory.permalink != submission.permalink:
+                                print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain, userhistory.permalink, datetime.datetime.fromtimestamp(userhistory.created_utc))
+                                #  Do things like report the post
+                                submission.report("R5 violation check!")
 
 #########################################################################################################
 # Discord task & functions
@@ -430,26 +488,29 @@ async def about(ctx):
 async def commands(ctx):
     global hellomsg
     randhello = random.choice(hellomsg)
-    await ctx.send("{1} {0.author.mention}!  Here's a list of all commands:\n"
-                   "`%getuser` - Shows a list of tracked users\n"
-                   "`%adduser Xusername TRUE/FALSE` - Adds/Updates a user to the tracked user list.  TRUE/FALSE notates whether or not a sticky will be created in the thread they've posted in.\n"
-                   "`%removeuser Xusername` - Removes a user from tracked user list\n\n"
-                   "`%devtracker True/False` - Enables or disables dev tracking and Discord notifications\n"
-                   "`%devtrackerstatus` - Shows whether or not the dev tracking and Discord notifications are running.\n"
-                   "`%updatetime` - Updates the time interval for the Reddit scans\n"
-                   "`%commentsticky True/False` - Enables or disables the Reddit sticky comment functionality.  References the tracked users.\n"
-                   "`%commentstickystatus` - Shows whether or not the Reddit sticky comment functionality is running.\n\n"
-                   "`%nextscan` - Displays next run time\n"
-                   "`%devchannel add/remove` - Adds or removes a channel for Dev post notifications.\n\n"
-                   "`%fhb True/False` - Enables/disables the enforcement of flairs on subreddit posts.\n"
-                   "`%fhbint number` - Changes the interval of Flair Helper.\n\n"
-                   "`%dml True/False` - Enables/disables checking the mod log for duplicate actions.\n\n"
-                   "`%monitor` - See how hot I'm running\n"
-                   "`%updatesubreddit Xsubname` - Change the subreddit that the bot performs MODERATION actions on.  This does not affect dev tracking.".format(ctx, randhello))
+    await ctx.send(
+        "{1} {0.author.mention}!  Here's a list of all commands:\n"
+        "`%getusers` - Shows a list of tracked users\n"
+        "`%adduser Xusername TRUE/FALSE` - Adds/Updates a user to the tracked user list.  TRUE/FALSE notates whether or not a sticky will be created in the thread they've posted in.\n"
+        "`%removeuser Xusername` - Removes a user from tracked user list\n\n"
+        "`%devtracker True/False` - Enables or disables dev tracking and Discord notifications\n"
+        "`%devtrackerstatus` - Shows whether or not the dev tracking and Discord notifications are running.\n"
+        "`%devchannel add/remove` - Adds or removes a channel for Dev post notifications.\n"
+        "`%updatetime` - Updates the time interval for the Reddit scans\n\n"
+        "`%commentsticky True/False` - Enables or disables the Reddit sticky comment functionality.  References the tracked users list.\n"
+        "`%commentstickystatus` - Shows whether or not the Reddit sticky comment functionality is running.\n\n"
+        "`%nextscan` - Displays next run time\n\n"
+        "`%fhb True/False` - Enables/disables the enforcement of flairs on subreddit posts.\n"
+        "`%fhbint number` - Changes the interval of Flair Helper.\n\n"
+        "`%dmlchannel add/remove` - Adds or removes a channel for Duplicate Mod Log notifications.\n"
+        "`%dml True/False` - Enables/disables checking the mod log for duplicate actions.\n\n"
+        "`%r5 True/False` - Enables/disables checking new submissions for potential R5 violations.\n\n"
+        "`%monitor` - See how hot my server is running at\n"
+        "`%updatesubreddit Xsubname` - Change the subreddit that the bot performs MODERATION actions on.  This does not affect dev tracking.".format(ctx, randhello))
 
 
 @client.command()
-async def getuser(ctx):  # Gets a list of all users being tracked
+async def getusers(ctx):  # Gets a list of all users being tracked
     global usertracker, hellomsg
     randhello = random.choice(hellomsg)
     await ctx.send(
@@ -530,42 +591,43 @@ async def devchannel(ctx, arg1):  # Command to change the channel of the dev tra
     friendlyserver = str(ctx.message.guild.name)
     servernameID = str(ctx.message.guild.id)
     channelnameID = str(ctx.message.channel.id)
-
     # Check to see if there's existing and if so, save the DML channel so we can re-add it.
     allserverdata = serversheet.get_all_records()
-    iterator = 0
     dmlchannel = ''
     for data in allserverdata:
-        iterator += 1
-        if servernameID in data.values():
-            dmlchannel = data['DML Channel'][servernameID]
-            return dmlchannel
+        print("looking for DML channel in our list")
+        if data['DML Channel']:
+            dmlchannel = str(data['DML Channel'])
+            break
     else:
-        print("No pre-existing DML channel found")
-
+        print("Didn't find a pre-existing DML Channel")
     channelupdate = [friendlyserver, servernameID, channelnameID, dmlchannel]
-
     if arg1.lower() == 'add':
         resultsadddata = adddata(serversheet, channelupdate, True)
         if resultsadddata == 'Update':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver}')
+            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
             await ctx.send(
                 "{1} {0.author.mention}!  It seems a channel was already set for this server.  "
                 "I've updated my records and will post notifications here now.".format(ctx, randhello))
         if resultsadddata == 'Append':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver}')
+            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
             await ctx.send(
                 "{1} {0.author.mention}!  I've updated my records and will post "
                 "notifications here now.".format(ctx, randhello))
-    if arg1.lower() == 'remove':
+    elif arg1.lower() == 'remove':
         removechannel = removedata(serversheet, int(channelnameID))
         if removechannel:
+            shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
             await ctx.send(
                 "{1} {0.author.mention}!  I will no longer post notifications to this channel.".format(ctx, randhello))
         elif not removechannel:
+            shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
             await ctx.send(
                 "{1} {0.author.mention}!  I don't think I was posting notifications to this "
                 "channel to begin with.".format(ctx, randhello))
+    else:
+        await ctx.send(
+            "{1} {0.author.mention}!  I don't understand the command!".format(ctx, randhello))
 
 
 @client.command()  # Command to turn on / off the dev comment sticky functionality
@@ -612,15 +674,15 @@ async def devtracker(ctx, arg1):
         redditlooper = True
         shturmanlog('Info', f'{ctx.author} has enabled dev comment tracking & Discord notifications.')
         await ctx.send(
-            "{1} {0.author.mention}!  I will now track dev comments and post notifications in Discord.".format(ctx,
-                                                                                                               randhello))
+            "{1} {0.author.mention}!  I will now track dev "
+            "comments and post notifications in Discord.".format(ctx, randhello))
         client.loop.create_task(reddit_loop())
     elif arg1.lower() == 'false':
         redditlooper = False
         shturmanlog('Info', f'{ctx.author} has disabled dev comment tracking & Discord notifications.')
         await ctx.send(
-            "{1} {0.author.mention}!  I will no longet track dev comments and post notifications in Discord.".format(
-                ctx, randhello))
+            "{1} {0.author.mention}!  I will no longet track dev comments "
+            "and post notifications in Discord.".format(ctx, randhello))
     else:
         await ctx.send("{1} {0.author.mention}!  I didn't understand your command.".format(ctx, randhello))
 
@@ -631,12 +693,12 @@ async def devtrackerstatus(ctx):
     randhello = random.choice(hellomsg)
     if redditlooper:
         await ctx.send(
-            "{1} {0.author.mention}!  I am currently tracking dev comments and posting Discord notifications.".format(
-                ctx, randhello))
+            "{1} {0.author.mention}!  I am currently tracking dev "
+            "comments and posting Discord notifications.".format(ctx, randhello))
     if not redditlooper:
         await ctx.send(
-            "{1} {0.author.mention}!  I am currently NOT tracking dev comments and posting Discord notifications.".format(
-                ctx, randhello))
+            "{1} {0.author.mention}!  I am currently NOT tracking dev "
+            "comments and posting Discord notifications.".format(ctx, randhello))
 
 
 @client.command()  # Changes the time interval for the dev tracker
@@ -775,36 +837,60 @@ async def dmlchannel(ctx, arg1):
     friendlyserver = str(ctx.message.guild.name)
     servernameID = str(ctx.message.guild.id)
     dmlchannel = str(ctx.message.channel.id)
-
     # Check to see if there's existing and if so, save the dev channel so we can re-add it during the update.
     allserverdata = serversheet.get_all_records()
-    iterator = 0
     devchannel = ''
     for data in allserverdata:
-        iterator += 1
-        if servernameID in data.values():
-            devchannel = data['Dev Channel'][iterator]
-            return devchannel
+        print("looking for Dev Channel in our list")
+        if data['Dev Channel']:
+            devchannel = str(data['Dev Channel'])
+            break
     else:
-        print("No pre-existing dev channel found")
-
+        print("Didn't find a pre-existing Dev Channel")
     channelupdate = [friendlyserver, servernameID, devchannel, dmlchannel]
-
     if arg1.lower() == 'add':
         resultsadddata = adddata(serversheet, channelupdate, True)
         if resultsadddata == 'Update':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver}')
-            await ctx.send("{1} {0.author.mention}!  It seems a channel was already set for this server.  I've updated my records and will post notifications here now.".format(ctx, randhello))
+            shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
+            await ctx.send("{1} {0.author.mention}!  It seems a channel was already set for this server.  "
+                           "I've updated my records and will post notifications here now.".format(ctx, randhello))
         if resultsadddata == 'Append':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver}')
-            await ctx.send("{1} {0.author.mention}!  I've updated my records and will post notifications here now.".format(ctx, randhello))
-    if arg1.lower() == 'remove':
+            shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
+            await ctx.send("{1} {0.author.mention}!  I've updated my records and "
+                           "will post notifications here now.".format(ctx, randhello))
+    elif arg1.lower() == 'remove':
         removechannel = removedata(serversheet, int(dmlchannel))
-        if removechannel == True:
-            await ctx.send("{1} {0.author.mention}!  I will no longer post notifications to this channel.".format(ctx, randhello))
-        elif removechannel == False:
-            await ctx.send("{1} {0.author.mention}!  I don't think I was posting notifications to this channel to begin with.".format(ctx, randhello))
+        if removechannel:
+            shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
+            await ctx.send("{1} {0.author.mention}!  I will no "
+                           "longer post notifications to this channel.".format(ctx, randhello))
+        elif not removechannel:
+            shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
+            await ctx.send("{1} {0.author.mention}!  I don't think I was "
+                           "posting notifications to this channel to begin with.".format(ctx, randhello))
+    else:
+        await ctx.send("{1} {0.author.mention}!  I don't understand your command!".format(ctx, randhello))
 
+
+@client.command()  # Command to enable/disable the potential R5 violation checker
+async def r5(ctx, arg1):
+    global hellomsg, subreddit_name, redditlogin, rule5loop
+    randhello = random.choice(hellomsg)
+    if arg1.lower() == 'true':
+        rule5loop = True
+        client.loop.create_task(rule_5_checker())
+        shturmanlog('Info', f'{ctx.author} enabled R5 checker on the subbreddit, {subreddit_name}.')
+        await ctx.send(
+            "{1} {0.author.mention}!  I will now check R5 violations "
+            "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+    elif arg1.lower() == 'false':
+        rule5loop = False
+        shturmanlog('Info', f'{ctx.author} disabled checking for R5 violations on the subbreddit, {subreddit_name}.')
+        await ctx.send(
+            "{1} {0.author.mention}!  I will no longer check for R5 violations "
+            "on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+    else:
+        await ctx.send("{1} {0.author.mention}!  I didn't understand your command!".format(ctx, randhello))
 
 #########################################################################################################
 # Global Configuration variables
@@ -816,8 +902,9 @@ nextscan = ''  # Establishing global varible to track the next run time for the 
 fhbinterval = 60  # Time interval for the Flair Helper Bot looper
 fhblooper = True  # Determines whether or not Flair Helper Bot will run
 dmlinterval = 60  # Sets the time window to see if duplicate mod actions have been taken
-dmlloop = True
+dmlloop = False
 # dmlchannel = 734805584968417321  # The text channel that the bot will alert moderators in # Test server ATM
+rule5loop = False
 raspi_temp = float('40')  # Establishing a global temp float variable
 subreddit_name = 'EFTDesign'
 devcommentsticky = False
