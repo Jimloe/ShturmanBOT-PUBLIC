@@ -230,7 +230,7 @@ async def flair_helper_bot(redditlogin):
         for submission in submissions:  # Loop through each one
             if str(submission.link_flair_text).lower() == 'none':
                 print('Caught a post!', submission.title, submission.link_flair_text)
-                fhbtime = datetime.datetime.utcnow()
+                fhbtime = str(datetime.datetime.utcnow().timestamp()).split(".")[0]
                 greeting = "{0} {1}!, \n\n".format(randhello, submission.author)
                 commentremovalmsg = greeting + removalreason + flairmsg + footermsg  # Construct removal message
                 submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
@@ -249,7 +249,7 @@ async def flair_helper_bot(redditlogin):
         for modaction in allmodposts:
             posthistory = modaction['ID']
             commenthistory = modaction['Comment']
-            modtime = modaction['Time']
+            modtime = datetime.datetime.utcfromtimestamp(int(modaction['Time']))
             prevsubission = redditlogin.submission(posthistory)
             try:
                 deletecheck = str(prevsubission.author.name)
@@ -262,7 +262,7 @@ async def flair_helper_bot(redditlogin):
                     redditlogin.comment(commenthistory).delete()
                     removedata(modposts, commenthistory)
                     redditlogin.submission(posthistory).report("FHB Approved - Need content check!")
-                elif modtime > cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
+                elif modtime < cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
                     print("Time exceeded on the post, removing and leaving comment")
                     editpost = redditlogin.comment(commenthistory)  # Get the comment to edit
                     newbody = "Sorry, your recent post still does not have any flair and was " \
@@ -315,7 +315,7 @@ async def flair_helper_bot(redditlogin):
 
 
 #  Need to ensure that we aren't going back and reporting on prior items.  Maybe short interval + same sleep time?
-async def dupe_mod_log():
+async def dupe_mod_log(dmlchannel):
     global dmlloop, dmlinterval, subreddit_name
     StartRunTime = datetime.datetime.utcnow()
     dmlloop = True  # Determines whether or not the loop will run
@@ -328,9 +328,12 @@ async def dupe_mod_log():
     while dmlloop is True:
         modlogdict = {'Target Post': None, 'Mod': None, 'Time': None, 'Perma': None}  # Establish dict
         modloghist = []  # Establish list we want to store dict entries in
+        print("Getting latest mod actions...")
         for log in redditlogin.subreddit(subreddit_name).mod.log(limit=5):  # Grab latest moderation actions
             logactiontime = datetime.datetime.utcfromtimestamp(log.created_utc)
+            modaction = False
             if TimeBackCheckerUTS < logactiontime:  # Checks to see if the mod action has occurred in our timeframe.
+                modaction = True
                 moddedpost = str(log.target_fullname).split("_")[1]
                 whomod = str(log._mod)
                 modlogdict['Target Post'] = moddedpost
@@ -338,8 +341,9 @@ async def dupe_mod_log():
                 modlogdict['Time'] = str(datetime.datetime.utcfromtimestamp(log.created_utc))
                 modlogdict['Perma'] = log.target_permalink
                 modloghist.append(
-                    modlogdict.copy())  # Have to use .copy() otherwise the dictionary doesn't get copied, just a reference is created.
-
+                modlogdict.copy())  # Have to use .copy() otherwise the dictionary doesn't get copied, just a reference is created.
+        if modaction is False:
+            print("Found no mod actions in the time window")
         dupes = {}
         # I don't know how this works, I think it checks for the duplicate 'Target Post' and then appends the Mods who
         # have performed actions on that Target Post
@@ -349,6 +353,7 @@ async def dupe_mod_log():
 
         # We loop through our duplicate list
         for duplicate in duplicates:
+            print("Looping through duplicates...")
             modlen = len(set(
                 duplicate['Mod']))  # Grabs the unique mods to filter out same mod performing multiple actions on post
             if modlen > 1:  # Makes sure there's multiple unique mods working on a post.
@@ -371,6 +376,7 @@ async def dupe_mod_log():
                     await textchannel.send(
                         "It looks like you guys are moderating the same post: www.reddit.com{0}".format(
                             modlogdict['Perma']))
+        print("DML sleeping...")
         await asyncio.sleep(dmlinterval)
     else:
         print('Dupemodlog has been halted!')
@@ -403,7 +409,8 @@ async def rule_5_checker(redditlogin):
                         # If they are, make sure the domain matches twitch or youtube
                         if userhistory.subreddit_name_prefixed == 'r/EFTDesign' and userhistory.domain == 'twitch.tv' or userhistory.domain == 'youtube.com':
                             # Make sure that our 2 day cutoff is observed.
-                            # We also want to make sure we're not matching against the original submission.  Compare history with our original permalink
+                            # We also want to make sure we're not matching against the original submission.
+                            # Compare history with our original permalink
                             if timecutoff < datetime.datetime.fromtimestamp(userhistory.created_utc) and userhistory.permalink != submission.permalink:
                                 print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain, userhistory.permalink, datetime.datetime.fromtimestamp(userhistory.created_utc))
                                 #  Do things like report the post
@@ -415,6 +422,7 @@ async def rule_5_checker(redditlogin):
 
 # Revamp this so it can be called as it's own deal and respond directly back to the user.
 # Also add the functionality when it's called to specify how far back to look and who to track.
+
 
 async def reddit_loop():
     global redditlooper, nextscan, allserverdata
@@ -626,8 +634,7 @@ async def devchannel(ctx, arg1):  # Command to change the channel of the dev tra
                 "{1} {0.author.mention}!  I don't think I was posting notifications to this "
                 "channel to begin with.".format(ctx, randhello))
     else:
-        await ctx.send(
-            "{1} {0.author.mention}!  I don't understand the command!".format(ctx, randhello))
+        await ctx.send("{1} {0.author.mention}!  I don't understand the command!".format(ctx, randhello))
 
 
 @client.command()  # Command to turn on / off the dev comment sticky functionality
@@ -763,10 +770,10 @@ async def fhb(ctx, arg1):
     if arg1.lower() == 'true':
         shturmanlog('Info', f'{ctx.author} enabled flair enforcement on the subbreddit, {subreddit_name}.')
         fhblooper = True
-        client.loop.create_task(flair_helper_bot(redditlogin))
         await ctx.send(
             "{1} {0.author.mention}!  I will now enforce flairs on "
             "submission in the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+        client.loop.create_task(flair_helper_bot(redditlogin))
     elif arg1.lower() == 'false':
         fhblooper = False
         shturmanlog('Info', f'{ctx.author} disabled flair enforcement on the subbreddit, {subreddit_name}.')
@@ -797,22 +804,20 @@ async def dml(ctx, arg1):
     randhello = random.choice(hellomsg)
     # Check to see if a channel is set for the server before turning on the log checker.
     allserverdata = serversheet.get_all_records()
-    iterator = 0
     finder = False
+    print("Searching for DML channel")
     for data in allserverdata:
-        iterator += 1
-        if ctx.message.guild.id in data.values():
+        if ctx.message.guild.id in data.values() and data['DML Channel']:
             finder = True
-            return finder
 
     if finder is True:  # Checks to see if we've found a DML Channel
         if arg1.lower() == 'true':
             shturmanlog('Info', f'{ctx.author} enabled duplicate mod checking on the subbreddit, {subreddit_name}.')
             dmlloop = True
-            client.loop.create_task(dupe_mod_log())
             await ctx.send(
                 "{1} {0.author.mention}!  I will now check for duplicate moderator "
                 "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+            client.loop.create_task(dupe_mod_log(data['DML Channel']))
         elif arg1.lower() == 'false':
             dmlloop = False
             shturmanlog('Info', f'{ctx.author} disabled duplicate mod checking on the subbreddit, {subreddit_name}.')
@@ -878,11 +883,11 @@ async def r5(ctx, arg1):
     randhello = random.choice(hellomsg)
     if arg1.lower() == 'true':
         rule5loop = True
-        client.loop.create_task(rule_5_checker())
         shturmanlog('Info', f'{ctx.author} enabled R5 checker on the subbreddit, {subreddit_name}.')
         await ctx.send(
             "{1} {0.author.mention}!  I will now check R5 violations "
             "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+        client.loop.create_task(rule_5_checker(redditlogin))
     elif arg1.lower() == 'false':
         rule5loop = False
         shturmanlog('Info', f'{ctx.author} disabled checking for R5 violations on the subbreddit, {subreddit_name}.')
