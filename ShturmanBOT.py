@@ -42,8 +42,6 @@ while not googleauth:
     except:
         continue
 
-founddata = False
-
 
 #########################################################################################################
 # Google Sheets Logging functions
@@ -201,6 +199,43 @@ def run_bot(redditlogin):
     return redditcomment, redditpost
 
 
+async def reddit_loop():
+    global redditlooper, nextscan, allserverdata
+    while redditlooper:
+        await client.wait_until_ready()
+        activity = discord.Activity(name='Reddit | %about', type=discord.ActivityType.watching)
+        await client.change_presence(activity=activity)
+        # Call the reddit function and return info in the RedditResults variable
+        redditresults = (run_bot(redditlogin))
+        # First check to see if we've found any comments/posts.  Then we're going to iterate though each list, and then
+        # for each iteration we have to check to see if it's a comment or post
+        # Once comment/post is checked, output that.
+        for op in redditresults[0]:
+            if op[0] == 'C:':
+                for data in allserverdata:  # Loops through each entry in our server list google doc
+                    # Formatting for comment
+                    # [0] is C or P, [1] is Time, [2] is post ID, [3] is Author, [4] is comment text, [5] is permalink
+                    channel = client.get_channel(data["Dev Channel"])
+                    await channel.send(f'{op[1]} - Found comment made by {op[3]}: "{op[4]}".  Link: {op[5]}')
+        for op in redditresults[1]:
+            if op[0] == 'P:':
+                for data in allserverdata:  # Loops through each entry in our server list google doc
+                    channel = client.get_channel(data["Dev Channel"])
+                    # Formatting for post
+                    # [0] is C or P, [1] is Time, [2] is post ID, [3] is Author,
+                    # [4] is title text, [5] is post body, [6] is permalink
+                    await channel.send(f'{op[1]} - Found "{op[4]}" post made by {op[3]}.  Link: {op[6]}')
+        activity = discord.Activity(name='Waiting game | %about', type=discord.ActivityType.playing)
+        await client.change_presence(activity=activity)
+        print(f'Going to sleep for {SleepyTime} seconds...')
+        # Global nextscan will tell us the schedule time the loop will run next
+        nextscan = datetime.datetime.now() + datetime.timedelta(seconds=SleepyTime)
+        await asyncio.sleep(SleepyTime)
+    if not redditlooper:
+        print(f'Scanning Reddit has been halted!')
+        shturmanlog('Info', 'Reddit Scanner has been halted.')
+
+
 async def flair_helper_bot(redditlogin):
     global subreddit_name, fhblooper, fhbinterval, hellomsg
     print('Started the FHB!')
@@ -214,9 +249,6 @@ async def flair_helper_bot(redditlogin):
                     "and I'll flair the post for you and approve it.\n\n" \
                     "Reply with this | Flair/Category\n" \
                     ":-------:|----------\n"
-    footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
-                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT error&message=I'm writing to you about the following submission: https://old.reddit.com/r/EscapefromTarkov/comments/hwjcc9/-/. %0D%0D ShturmanBOT has removed my post by mistake)*"
-
     flairmsg = ""
     for flair in redditlogin.subreddit(subreddit_name).flair.link_templates:
         flairdict[f'flair{fditerator}'] = flair['text']
@@ -232,6 +264,10 @@ async def flair_helper_bot(redditlogin):
                 print('Caught a post!', submission.title, submission.link_flair_text)
                 fhbtime = str(datetime.datetime.utcnow().timestamp()).split(".")[0]
                 greeting = "{0} {1}!, \n\n".format(randhello, submission.author)
+                footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
+                            "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
+                            "error&message=I'm writing to you about the following submission: https://old.reddit.com{0}. " \
+                            "%0D%0D ShturmanBOT has removed my post by mistake)*".format(submission.permalink)
                 commentremovalmsg = greeting + removalreason + flairmsg + footermsg  # Construct removal message
                 submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
                 submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')  # Send message
@@ -249,6 +285,7 @@ async def flair_helper_bot(redditlogin):
         for modaction in allmodposts:
             posthistory = modaction['ID']
             commenthistory = modaction['Comment']
+            subpermalink = modaction['Permalink']
             modtime = datetime.datetime.utcfromtimestamp(int(modaction['Time']))
             prevsubission = redditlogin.submission(posthistory)
             try:
@@ -268,6 +305,10 @@ async def flair_helper_bot(redditlogin):
                     newbody = "Sorry, your recent post still does not have any flair and was " \
                               "permanently removed. Feel free to resubmit your post and remember " \
                               "to flair it once it is posted."
+                    footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
+                                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
+                                "error&message=I'm writing to you about the following submission: https://old.reddit.com{0}. " \
+                                "%0D%0D ShturmanBOT has removed my post by mistake)*".format(subpermalink)
                     newpost = newbody + footermsg
                     editpost.edit(newpost)
                     removedata(modposts, commenthistory)
@@ -314,17 +355,17 @@ async def flair_helper_bot(redditlogin):
         shturmanlog('Info', 'FHB has been halted!')
 
 
-#  Need to ensure that we aren't going back and reporting on prior items.  Maybe short interval + same sleep time?
+#  Need to ensure that we aren't going back and reporting on prior items.  Maybe BoundedSets?
 async def dupe_mod_log(dmlchannel):
     global dmlloop, dmlinterval, subreddit_name
     StartRunTime = datetime.datetime.utcnow()
     dmlloop = True  # Determines whether or not the loop will run
     delta = datetime.timedelta(seconds=dmlinterval)
     TimeBackCheckerUTS = StartRunTime - delta
-    textchannel = client.get_channel(dmlchannel)
+    textchannel = client.get_channel(734805584968417321)  # Hardcoded to testing server channel atm.  Use reddit-chat in mod discord
     nickdb = []  # Establishes empty list for storing multiple dicts
     for i in textchannel.members:  # Loop through all members in the text channel and create our list
-        nickdb.append({"nick": i.nick, "mention": i.mention})
+        nickdb.append({"nick": i.nick, "mention": i.mention, "id": i.id})
     while dmlloop is True:
         modlogdict = {'Target Post': None, 'Mod': None, 'Time': None, 'Perma': None}  # Establish dict
         modloghist = []  # Establish list we want to store dict entries in
@@ -340,8 +381,8 @@ async def dupe_mod_log(dmlchannel):
                 modlogdict['Mod'] = whomod
                 modlogdict['Time'] = str(datetime.datetime.utcfromtimestamp(log.created_utc))
                 modlogdict['Perma'] = log.target_permalink
-                modloghist.append(
-                modlogdict.copy())  # Have to use .copy() otherwise the dictionary doesn't get copied, just a reference is created.
+                # Have to use .copy() otherwise the dictionary doesn't get copied, just a reference is created.
+                modloghist.append(modlogdict.copy())
         if modaction is False:
             print("Found no mod actions in the time window")
         dupes = {}
@@ -363,19 +404,26 @@ async def dupe_mod_log(dmlchannel):
                 for i in textchannel.members:
                     if i.nick is None:  # This is to catch people whose discord name matches Reddit name
                         if i.display_name in dupemods:  # Checks to see if we've got a match for duplicate mods
-                            nickdb.append({"name": i.display_name, "mention": i.mention})
+                            nickdb.append({"name": i.display_name, "mention": i.mention, "id": i.id})
                     else:
                         if i.nick in dupemods:  # Checks to see if we've got a match for duplicate mods
-                            nickdb.append({"name": i.nick, "mention": i.mention})
+                            nickdb.append({"name": i.nick, "mention": i.mention, "id": i.id})
                 nummods = len(nickdb)
                 nummoditerate = 0
-                while nummoditerate < nummods:
-                    await textchannel.send("Hey {0}".format(nickdb[nummoditerate]['mention']))
+                while nummoditerate < nummods:  # Loop through our duplicate moderators
+                    # If we've got a dm, then send the DM, otherwise we're posting to the channel
+                    if dmlchannel == 'dm':
+                        userdm = client.get_user(nickdb[nummoditerate]['id'])
+                        await userdm.send("Hey {0}, it looks like you're moderating the same post as someone else: "
+                                          "www.reddit.com{1}".format(nickdb[nummoditerate]['name'], modlogdict['Perma']))
+                    elif dmlchannel != 'dm':
+                        await textchannel.send("Hey {0}".format(nickdb[nummoditerate]['mention']))
                     nummoditerate += 1
                 else:
-                    await textchannel.send(
-                        "It looks like you guys are moderating the same post: www.reddit.com{0}".format(
-                            modlogdict['Perma']))
+                    if dmlchannel != 'dm':
+                        await textchannel.send(
+                            "It looks like you guys are moderating the same post: "
+                            "www.reddit.com{0}".format(modlogdict['Perma']))
         print("DML sleeping...")
         await asyncio.sleep(dmlinterval)
     else:
@@ -383,28 +431,31 @@ async def dupe_mod_log(dmlchannel):
 
 
 async def rule_5_checker(redditlogin):
-    global rule5loop
+    global rule5loop, rule5removal, hellomsg
     newids = BoundedSet(100)  # PRAW set functionality.  Creates a set and boots out old data as needed.
     urlmatch = ["youtube.com", "twitch.tv"]
     rule5loop = True
-
     while rule5loop:  # Create a loop so we can exit out of this via Discord command
+        print("Checking subreddit for R5 submissions")
         submissions = redditlogin.subreddit(subreddit_name).new(limit=15)  # Grab the newest 15 submissions
-
         StartRunTime = datetime.datetime.utcnow()  # Establish current run time to compare 2 day cutoff date to
         delta = datetime.timedelta(days=2)
         timecutoff = StartRunTime - delta
 
-        for submission in submissions:  # Loop through each user submission
+        for submission in submissions:  # Loop through each subreddit submission
             if submission.id in newids:  # Checks to see if our item is in the set we've built
                 continue  # It has found a match, so continue to the next submission in the for loop
-
             newids.add(submission.id)  # We haven't found a match above, so add it to the BoundedSet for next time
             for url in urlmatch:  # Loop through youtube & twitch to see if we've got youtube/twitch submissions
                 if url in submission.url:  # Finds a match
-                    print("Match found!", submission.url)
                     subauthor = submission.author  # Grabs the author.  We want to check their history
                     for userhistory in redditlogin.redditor(str(subauthor)).submissions.new(limit=10):  # Create a user object and check their post history
+                        # Checks to see if a submission has been removed, if so we want to ignore it
+                        try:
+                            if userhistory.removed is True:
+                                continue  # The post has been removed, continue on to next submission
+                        except:
+                            pass  # The post has not been removed, so we want to move on to the rest of the script
                         # Checks to see if submissions are in our subreddit
                         # If they are, make sure the domain matches twitch or youtube
                         if userhistory.subreddit_name_prefixed == 'r/EFTDesign' and userhistory.domain == 'twitch.tv' or userhistory.domain == 'youtube.com':
@@ -414,65 +465,55 @@ async def rule_5_checker(redditlogin):
                             if timecutoff < datetime.datetime.fromtimestamp(userhistory.created_utc) and userhistory.permalink != submission.permalink:
                                 print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain, userhistory.permalink, datetime.datetime.fromtimestamp(userhistory.created_utc))
                                 #  Do things like report the post
-                                submission.report("R5 violation check!")
+                                if rule5removal:  # Checks to see if we want to remove the post
+                                    randhello = random.choice(hellomsg)
+                                    bodymsg = "{0},\n\nLimit posting of your own linked content to one (1) video " \
+                                              "every two (2) days.  Those excessively posting their own content must " \
+                                              "contribute to the subreddit in other ways outside of " \
+                                              "their own video posts.  [Your recent post](https://reddit.com{1}) has " \
+                                              "been removed for violating this rule.".format(randhello, submission.permalink)
+                                    footermsg = "***\n\n*I am a bot, and this post was generated automatically. " \
+                                                "If you believe this was done in error, please contact the " \
+                                                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
+                                                "error&message=I'm writing to you about the following submission: https://reddit.com{0}. " \
+                                                "%0D%0D ShturmanBOT has removed my post by mistake)*".format(submission.permalink)
+                                    commentremovalmsg = bodymsg + footermsg
+                                    submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)
+                                    submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')
 
-#########################################################################################################
-# Discord task & functions
-#########################################################################################################
-
-# Revamp this so it can be called as it's own deal and respond directly back to the user.
-# Also add the functionality when it's called to specify how far back to look and who to track.
-
-
-async def reddit_loop():
-    global redditlooper, nextscan, allserverdata
-    while redditlooper:
-        await client.wait_until_ready()
-        activity = discord.Activity(name='Reddit | %about', type=discord.ActivityType.watching)
-        await client.change_presence(activity=activity)
-        # Call the reddit function and return info in the RedditResults variable
-        redditresults = (run_bot(redditlogin))
-        # First check to see if we've found any comments/posts.  Then we're going to iterate though each list, and then
-        # for each iteration we have to check to see if it's a comment or post
-        # Once comment/post is checked, output that.
-        for op in redditresults[0]:
-            if op[0] == 'C:':
-                for data in allserverdata:  # Loops through each entry in our server list google doc
-                    # Formatting for comment
-                    # [0] is C or P, [1] is Time, [2] is post ID, [3] is Author, [4] is comment text, [5] is permalink
-                    channel = client.get_channel(data["Dev Channel"])
-                    await channel.send(f'{op[1]} - Found comment made by {op[3]}: "{op[4]}".  Link: {op[5]}')
-        for op in redditresults[1]:
-            if op[0] == 'P:':
-                for data in allserverdata:  # Loops through each entry in our server list google doc
-                    channel = client.get_channel(data["Dev Channel"])
-                    # Formatting for post
-                    # [0] is C or P, [1] is Time, [2] is post ID, [3] is Author,
-                    # [4] is title text, [5] is post body, [6] is permalink
-                    await channel.send(f'{op[1]} - Found "{op[4]}" post made by {op[3]}.  Link: {op[6]}')
-        activity = discord.Activity(name='Waiting game | %about', type=discord.ActivityType.playing)
-        await client.change_presence(activity=activity)
-        print(f'Going to sleep for {SleepyTime} seconds...')
-        # Global nextscan will tell us the schedule time the loop will run next
-        nextscan = datetime.datetime.now() + datetime.timedelta(seconds=SleepyTime)
-        await asyncio.sleep(SleepyTime)
-    if not redditlooper:
-        print(f'Scanning Reddit has been halted!')
-        shturmanlog('Info', 'Reddit Scanner has been halted.')
+                                else:  # If we don't have post removal set, then we want to report the post.
+                                    submission.report("R5 violation check!")
+        print("Finished R5 checking, sleeping...")
+        await asyncio.sleep(30)
 
 
 #########################################################################################################
 # Discord Commands
 #########################################################################################################
-
 client = commands.Bot(command_prefix='%')
 
 
 @client.event
 async def on_ready():
+    global approvedusers, modchannel
     activity = discord.Activity(name='Waiting game | %about', type=discord.ActivityType.playing)
     await client.change_presence(activity=activity)
     print('The bot is ready!')
+
+
+@client.command()
+async def updatemodlist(ctx):
+    global hellomsg, approvedusers
+    textchannel = client.get_channel(modchannel)
+    randhello = random.choice(hellomsg)
+    approvedusers = set()  # Establishes empty set for approved moderators
+    for i in textchannel.members:  # Loop through all members in the text channel and create our set
+        for roles in i.roles:
+            if str(roles) == 'Moderator':
+                approvedusers.add(i.nick)
+            else:
+                continue
+    await ctx.send("{1} {0.author.mention}! I've updated my list of approved users.".format(ctx, randhello))
 
 
 @client.command()
@@ -510,10 +551,13 @@ async def commands(ctx):
         "`%nextscan` - Displays next run time\n\n"
         "`%fhb True/False` - Enables/disables the enforcement of flairs on subreddit posts.\n"
         "`%fhbint number` - Changes the interval of Flair Helper.\n\n"
+        "`%dml True/False` - Enables/disables checking the mod log for duplicate actions.\n"
         "`%dmlchannel add/remove` - Adds or removes a channel for Duplicate Mod Log notifications.\n"
-        "`%dml True/False` - Enables/disables checking the mod log for duplicate actions.\n\n"
-        "`%r5 True/False` - Enables/disables checking new submissions for potential R5 violations.\n\n"
-        "`%monitor` - See how hot my server is running at\n"
+        "`%dmltype DM/Channel` - Specifies whether you want reports to go to a channel or to DM the users.\n\n"
+        "`%r5 True/False` - Enables/disables checking new submissions for potential R5 violations.\n"
+        "`%r5remove True/False` - Enables/disables automatic removal of posts.\n\n"
+        "`%monitor` - See how hot my server is running at\n\n"
+        "`%updatemodlist` - Scan the mod Discord and see if there's been any changes in the Moderator roles.\n\n"
         "`%updatesubreddit Xsubname` - Change the subreddit that the bot performs MODERATION actions on.  This does not affect dev tracking.".format(ctx, randhello))
 
 
@@ -531,33 +575,41 @@ async def getusers(ctx):  # Gets a list of all users being tracked
 
 @client.command()
 async def adduser(ctx, arg1, arg2):  # arg1 = username, arg2 = whether or not to sticky comments in threads
-    global redditlooper, usersheet, hellomsg
+    global redditlooper, usersheet, hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    userupdate = [arg1, arg2]
-    resultsadddata = adddata(usersheet, userupdate, True)
-    if resultsadddata == 'Update':
-        shturmanlog('Info', f'{ctx.author} Has updated {arg1} on the Reddit tracking list')
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{2} {0.author.mention}!  {1} has been updated on the "
-            "list of users that I'll track.".format(ctx, arg1, randhello))
-    if resultsadddata == 'Append':
-        shturmanlog('Info', f'{ctx.author} Has added {arg1} on the Reddit tracking list')
-        await ctx.send(
-            "{2} {0.author.mention}!  {1} has been added to the list "
-            "of users that I'll track.".format(ctx, arg1,randhello))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        userupdate = [arg1, arg2]
+        resultsadddata = adddata(usersheet, userupdate, True)
+        if resultsadddata == 'Update':
+            shturmanlog('Info', f'{ctx.author} Has updated {arg1} on the Reddit tracking list')
+            await ctx.send(
+                "{2} {0.author.mention}!  {1} has been updated on the "
+                "list of users that I'll track.".format(ctx, arg1, randhello))
+        if resultsadddata == 'Append':
+            shturmanlog('Info', f'{ctx.author} Has added {arg1} on the Reddit tracking list')
+            await ctx.send(
+                "{2} {0.author.mention}!  {1} has been added to the list "
+                "of users that I'll track.".format(ctx, arg1,randhello))
 
 
 @client.command()
 async def removeuser(ctx, arg1):  # Removes a user from the dev tracking list
-    global redditlooper, usersheet, hellomsg
+    global redditlooper, usersheet, hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    if removedata(usersheet, str(arg1)):
-        shturmanlog('Info', f'{ctx.author} Has removed {arg1} from the Reddit tracking list')
-        await ctx.send("{2} {0.author.mention}!  I will no longer track {1}.".format(ctx, arg1, randhello))
-    else:
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{2} {0.author.mention}!  Double check the spelling of {1}, "
-            "I couldn't find it in my list of users I'm tracking.".format(ctx, arg1, randhello))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        if removedata(usersheet, str(arg1)):
+            shturmanlog('Info', f'{ctx.author} Has removed {arg1} from the Reddit tracking list')
+            await ctx.send("{2} {0.author.mention}!  I will no longer track {1}.".format(ctx, arg1, randhello))
+        else:
+            await ctx.send(
+                "{2} {0.author.mention}!  Double check the spelling of {1}, "
+                "I couldn't find it in my list of users I'm tracking.".format(ctx, arg1, randhello))
 
 
 @client.command()
@@ -594,70 +646,78 @@ async def monitor(ctx):  # Raspberry Pi temperature monitoring
 
 @client.command()
 async def devchannel(ctx, arg1):  # Command to change the channel of the dev tracker alert
-    global hellomsg
+    global hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    friendlyserver = str(ctx.message.guild.name)
-    servernameID = str(ctx.message.guild.id)
-    channelnameID = str(ctx.message.channel.id)
-    # Check to see if there's existing and if so, save the DML channel so we can re-add it.
-    allserverdata = serversheet.get_all_records()
-    dmlchannel = ''
-    for data in allserverdata:
-        print("looking for DML channel in our list")
-        if data['DML Channel']:
-            dmlchannel = str(data['DML Channel'])
-            break
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        print("Didn't find a pre-existing DML Channel")
-    channelupdate = [friendlyserver, servernameID, channelnameID, dmlchannel]
-    if arg1.lower() == 'add':
-        resultsadddata = adddata(serversheet, channelupdate, True)
-        if resultsadddata == 'Update':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
-            await ctx.send(
-                "{1} {0.author.mention}!  It seems a channel was already set for this server.  "
-                "I've updated my records and will post notifications here now.".format(ctx, randhello))
-        if resultsadddata == 'Append':
-            shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
-            await ctx.send(
-                "{1} {0.author.mention}!  I've updated my records and will post "
-                "notifications here now.".format(ctx, randhello))
-    elif arg1.lower() == 'remove':
-        removechannel = removedata(serversheet, int(channelnameID))
-        if removechannel:
-            shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
-            await ctx.send(
-                "{1} {0.author.mention}!  I will no longer post notifications to this channel.".format(ctx, randhello))
-        elif not removechannel:
-            shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
-            await ctx.send(
-                "{1} {0.author.mention}!  I don't think I was posting notifications to this "
-                "channel to begin with.".format(ctx, randhello))
-    else:
-        await ctx.send("{1} {0.author.mention}!  I don't understand the command!".format(ctx, randhello))
+        friendlyserver = str(ctx.message.guild.name)
+        servernameID = str(ctx.message.guild.id)
+        channelnameID = str(ctx.message.channel.id)
+        # Check to see if there's existing and if so, save the DML channel so we can re-add it.
+        allserverdata = serversheet.get_all_records()
+        dmlchannel = ''
+        for data in allserverdata:
+            print("looking for DML channel in our list")
+            if data['DML Channel']:
+                dmlchannel = str(data['DML Channel'])
+                break
+        else:
+            print("Didn't find a pre-existing DML Channel")
+        channelupdate = [friendlyserver, servernameID, channelnameID, dmlchannel]
+        if arg1.lower() == 'add':
+            resultsadddata = adddata(serversheet, channelupdate, True)
+            if resultsadddata == 'Update':
+                shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
+                await ctx.send(
+                    "{1} {0.author.mention}!  It seems a channel was already set for this server.  "
+                    "I've updated my records and will post notifications here now.".format(ctx, randhello))
+            if resultsadddata == 'Append':
+                shturmanlog('Info', f'{ctx.author} Has updated the channel for {friendlyserver} to: {channelnameID}')
+                await ctx.send(
+                    "{1} {0.author.mention}!  I've updated my records and will post "
+                    "notifications here now.".format(ctx, randhello))
+        elif arg1.lower() == 'remove':
+            removechannel = removedata(serversheet, int(channelnameID))
+            if removechannel:
+                shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
+                await ctx.send(
+                    "{1} {0.author.mention}!  I will no longer post notifications to this channel.".format(ctx, randhello))
+            elif not removechannel:
+                shturmanlog('Info', f'{ctx.author} Has removed the channel for {friendlyserver}. It was: {channelnameID}')
+                await ctx.send(
+                    "{1} {0.author.mention}!  I don't think I was posting notifications to this "
+                    "channel to begin with.".format(ctx, randhello))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I don't understand the command!".format(ctx, randhello))
 
 
 @client.command()  # Command to turn on / off the dev comment sticky functionality
 async def commentsticky(ctx, arg1):
-    global devcommentsticky, hellomsg
+    global devcommentsticky, hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    if arg1.lower() == 'true':
-        devcommentsticky = True
-        shturmanlog('Info', f'{ctx.author} Has enabled dev comment stickies for reddit threads.')
-        datatoadd = ['devcommentsticky', devcommentsticky]
-        adddata(variablestorage, datatoadd, True)
-        await ctx.send("{1} {0.author.mention}!  I will now create a sticky comment and update dev "
-                       "replies in reddit threads.  Requires devtracking to be enabled".format(ctx, randhello))
-    elif arg1.lower() == 'false':
-        devcommentsticky = False
-        shturmanlog('Info', f'{ctx.author} Has disabled dev comment stickies for reddit threads.')
-        datatoadd = ['devcommentsticky', devcommentsticky]
-        adddata(variablestorage, datatoadd, True)
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I will no longer create a sticky comment and update dev replies in reddit "
-            "threads.".format(ctx, randhello))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send("{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello))
+        if arg1.lower() == 'true':
+            devcommentsticky = True
+            shturmanlog('Info', f'{ctx.author} Has enabled dev comment stickies for reddit threads.')
+            datatoadd = ['devcommentsticky', devcommentsticky]
+            adddata(variablestorage, datatoadd, True)
+            await ctx.send("{1} {0.author.mention}!  I will now create a sticky comment and update dev "
+                           "replies in reddit threads.  Requires devtracking to be enabled".format(ctx, randhello))
+        elif arg1.lower() == 'false':
+            devcommentsticky = False
+            shturmanlog('Info', f'{ctx.author} Has disabled dev comment stickies for reddit threads.')
+            datatoadd = ['devcommentsticky', devcommentsticky]
+            adddata(variablestorage, datatoadd, True)
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longer create a sticky comment and update dev replies in reddit "
+                "threads.".format(ctx, randhello))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello))
 
 
 @client.command()  # Gets the running status of the dev comment sticky
@@ -675,23 +735,27 @@ async def commentstickystatus(ctx):
 
 @client.command()  # Command to turn on / off the dev tracker
 async def devtracker(ctx, arg1):
-    global redditlooper, hellomsg
+    global redditlooper, hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    if arg1.lower() == 'true':
-        redditlooper = True
-        shturmanlog('Info', f'{ctx.author} has enabled dev comment tracking & Discord notifications.')
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I will now track dev "
-            "comments and post notifications in Discord.".format(ctx, randhello))
-        client.loop.create_task(reddit_loop())
-    elif arg1.lower() == 'false':
-        redditlooper = False
-        shturmanlog('Info', f'{ctx.author} has disabled dev comment tracking & Discord notifications.')
-        await ctx.send(
-            "{1} {0.author.mention}!  I will no longet track dev comments "
-            "and post notifications in Discord.".format(ctx, randhello))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send("{1} {0.author.mention}!  I didn't understand your command.".format(ctx, randhello))
+        if arg1.lower() == 'true':
+            redditlooper = True
+            shturmanlog('Info', f'{ctx.author} has enabled dev comment tracking & Discord notifications.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now track dev "
+                "comments and post notifications in Discord.".format(ctx, randhello))
+            client.loop.create_task(reddit_loop())
+        elif arg1.lower() == 'false':
+            redditlooper = False
+            shturmanlog('Info', f'{ctx.author} has disabled dev comment tracking & Discord notifications.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longet track dev comments "
+                "and post notifications in Discord.".format(ctx, randhello))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I didn't understand your command.".format(ctx, randhello))
 
 
 @client.command()  # Gets the running status of the dev tracker
@@ -710,192 +774,289 @@ async def devtrackerstatus(ctx):
 
 @client.command()  # Changes the time interval for the dev tracker
 async def updatetime(ctx, arg1):
-    global hellomsg, TimeBackChecker, SleepyTime, redditlooper, nextscan
+    global hellomsg, TimeBackChecker, SleepyTime, redditlooper, nextscan, approvedusers
     randhello = random.choice(hellomsg)
-    try:
-        convint = int(arg1)
-        TimeBackChecker = convint
-        SleepyTime = TimeBackChecker
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I'll now sleep for {2} between scans.".format(ctx, randhello, TimeBackChecker))
-        shturmanlog('Info',
-                    f'{ctx.author} updated the scan time to be {TimeBackChecker}. Stoping scans and '
-                    f'sleeping for that time before starting another scan.')
-        print('Attempting to stop task')
-        redditlooper = False  # Sets the variable to break the loop
-        updatetimeTS = nextscan - datetime.datetime.now()  # Grabs the timestamp for the next scan
-        updatetimeTS = str(updatetimeTS).split(".")[0]  # Converts our timestamp to a useable format
-        timestampconv = datetime.datetime.strptime(str(updatetimeTS), "%H:%M:%S")
-        a_timedelta = timestampconv - datetime.datetime(1900, 1, 1)
-        secondstowait = a_timedelta.total_seconds() + 1
-        print('Sleeping until current task finishes:', secondstowait)
-        await asyncio.sleep(secondstowait)  # Sleeps until the current loop finishes.
-        redditlooper = True  # Restarts the loop again with the new time interval.
-        client.loop.create_task(reddit_loop())
-    except:
-        await ctx.send("{1} {0.author.mention}!  Something went wrong!".format(ctx, randhello))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        try:
+            convint = int(arg1)
+            TimeBackChecker = convint
+            SleepyTime = TimeBackChecker
+            await ctx.send(
+                "{1} {0.author.mention}!  I'll now sleep for {2} between scans.".format(ctx, randhello, TimeBackChecker))
+            shturmanlog('Info',
+                        f'{ctx.author} updated the scan time to be {TimeBackChecker}. Stoping scans and '
+                        f'sleeping for that time before starting another scan.')
+            print('Attempting to stop task')
+            redditlooper = False  # Sets the variable to break the loop
+            updatetimeTS = nextscan - datetime.datetime.now()  # Grabs the timestamp for the next scan
+            updatetimeTS = str(updatetimeTS).split(".")[0]  # Converts our timestamp to a useable format
+            timestampconv = datetime.datetime.strptime(str(updatetimeTS), "%H:%M:%S")
+            a_timedelta = timestampconv - datetime.datetime(1900, 1, 1)
+            secondstowait = a_timedelta.total_seconds() + 1
+            print('Sleeping until current task finishes:', secondstowait)
+            await asyncio.sleep(secondstowait)  # Sleeps until the current loop finishes.
+            redditlooper = True  # Restarts the loop again with the new time interval.
+            client.loop.create_task(reddit_loop())
+        except:
+            await ctx.send("{1} {0.author.mention}!  Something went wrong!".format(ctx, randhello))
 
 
 @client.command()  # Changes the subreddit to moderate
 async def updatesubreddit(ctx, arg1):
-    global hellomsg, subreddit_name
+    global hellomsg, subreddit_name, approvedusers
     randhello = random.choice(hellomsg)
-    try:  # Catches if the subreddit doesn't exist
-        exists = True
-        redditlogin.subreddits.search_by_name(arg1, exact=True)
-    except:
-        exists = False
-    if exists:
-        try:  # Catches if the subreddit is privte or the bot is not a Mod.
-            modlist = []
-            for mod in redditlogin.subreddit(arg1).moderator():
-                modlist.append(mod)
-            if "ShturmanBOT" in modlist:
-                shturmanlog('Info', f'{ctx.author} has changed ShturmanBOT to moderate {arg1}.')
-                await ctx.send(
-                    "{1} {0.author.mention}!  I will now perform actions on {2}".format(ctx, randhello, arg1))
-            elif "ShturmanBOT" not in modlist:
-                await ctx.send("{1} {0.author.mention}!  I'm not a mod on that subreddit.".format(ctx, randhello))
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        try:  # Catches if the subreddit doesn't exist
+            exists = True
+            redditlogin.subreddits.search_by_name(arg1, exact=True)
         except:
-            await ctx.send("{1} {0.author.mention}!  I can't access that subreddit.".format(ctx, randhello))
-    if not exists:
-        await ctx.send("{1} {0.author.mention}!  Double check the spelling, "
-                       "I couldn't find that subreddit.".format(ctx, randhello))
+            exists = False
+        if exists:
+            try:  # Catches if the subreddit is privte or the bot is not a Mod.
+                modlist = []
+                for mod in redditlogin.subreddit(arg1).moderator():
+                    modlist.append(mod)
+                if "ShturmanBOT" in modlist:
+                    shturmanlog('Info', f'{ctx.author} has changed ShturmanBOT to moderate {arg1}.')
+                    await ctx.send(
+                        "{1} {0.author.mention}!  I will now perform actions on {2}".format(ctx, randhello, arg1))
+                elif "ShturmanBOT" not in modlist:
+                    await ctx.send("{1} {0.author.mention}!  I'm not a mod on that subreddit.".format(ctx, randhello))
+            except:
+                await ctx.send("{1} {0.author.mention}!  I can't access that subreddit.".format(ctx, randhello))
+        if not exists:
+            await ctx.send("{1} {0.author.mention}!  Double check the spelling, "
+                           "I couldn't find that subreddit.".format(ctx, randhello))
 
 
 @client.command()  # Command to turn on / off flair helper bot
 async def fhb(ctx, arg1):
-    global hellomsg, subreddit_name, redditlogin, fhblooper
+    global hellomsg, subreddit_name, redditlogin, fhblooper, approvedusers
     randhello = random.choice(hellomsg)
-    if arg1.lower() == 'true':
-        shturmanlog('Info', f'{ctx.author} enabled flair enforcement on the subbreddit, {subreddit_name}.')
-        fhblooper = True
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I will now enforce flairs on "
-            "submission in the subreddit, {2}.".format(ctx, randhello, subreddit_name))
-        client.loop.create_task(flair_helper_bot(redditlogin))
-    elif arg1.lower() == 'false':
-        fhblooper = False
-        shturmanlog('Info', f'{ctx.author} disabled flair enforcement on the subbreddit, {subreddit_name}.')
-        await ctx.send(
-            "{1} {0.author.mention}!  I will no longer enforce "
-            "flairs on the subreddit, {2}.".format(ctx, randhello,subreddit_name))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send(
-            "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+        if arg1.lower() == 'true':
+            shturmanlog('Info', f'{ctx.author} enabled flair enforcement on the subbreddit, {subreddit_name}.')
+            fhblooper = True
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now enforce flairs on "
+                "submission in the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+            client.loop.create_task(flair_helper_bot(redditlogin))
+        elif arg1.lower() == 'false':
+            fhblooper = False
+            shturmanlog('Info', f'{ctx.author} disabled flair enforcement on the subbreddit, {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longer enforce "
+                "flairs on the subreddit, {2}.".format(ctx, randhello,subreddit_name))
+        else:
+            await ctx.send(
+                "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
 
 
 @client.command()  # Command to change the flairhelperbot interval
 async def fhbint(ctx, arg1):
-    global hellomsg, subreddit_name, redditlogin, fhblooper
+    global hellomsg, subreddit_name, redditlogin, fhbinterval, approvedusers
     randhello = random.choice(hellomsg)
-    if int(arg1):
-        shturmanlog('Info', f'{ctx.author} has changed the FHB internval to , {arg1}.')
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I will now check posts for flair every {2} seconds.".format(ctx, randhello, arg1))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send(
-            "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+        if int(arg1):
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now check posts for flair every {2} seconds.".format(ctx, randhello, arg1))
+            shturmanlog('Info', f'{ctx.author} has changed the FHB internval to , {arg1}.')
+            fhbinterval = arg1
+        else:
+            await ctx.send(
+                "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
 
 
 @client.command()  # Command to turn on / off the duplicate moderator log checker
 async def dml(ctx, arg1):
-    global hellomsg, subreddit_name, redditlogin, dmlloop
+    global hellomsg, subreddit_name, redditlogin, dmlloop, dmltype, approvedusers
     randhello = random.choice(hellomsg)
-    # Check to see if a channel is set for the server before turning on the log checker.
-    allserverdata = serversheet.get_all_records()
-    finder = False
-    print("Searching for DML channel")
-    for data in allserverdata:
-        if ctx.message.guild.id in data.values() and data['DML Channel']:
-            finder = True
-
-    if finder is True:  # Checks to see if we've found a DML Channel
-        if arg1.lower() == 'true':
-            shturmanlog('Info', f'{ctx.author} enabled duplicate mod checking on the subbreddit, {subreddit_name}.')
-            dmlloop = True
-            await ctx.send(
-                "{1} {0.author.mention}!  I will now check for duplicate moderator "
-                "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
-            client.loop.create_task(dupe_mod_log(data['DML Channel']))
-        elif arg1.lower() == 'false':
-            dmlloop = False
-            shturmanlog('Info', f'{ctx.author} disabled duplicate mod checking on the subbreddit, {subreddit_name}.')
-            await ctx.send(
-                "{1} {0.author.mention}!  I will no longer check for duplicate "
-                "moderator actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
-        else:
-            await ctx.send(
-                "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
-    elif finder is False:  # Sends a message if we don't have a DML channel for the server first
-        await ctx.send("{1} {0.author.mention}!  Please set a channel using `%dmlchannel add` first, "
-                       "otherwise I won't be able to report things!.".format(ctx, randhello))
-    else:  # Sends a message saying we don't recognize the command.
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        allserverdata = serversheet.get_all_records()
+        finder = False
+        if dmltype == 'dm':  # Checks to see if we're reporting via DMs.
+            if arg1.lower() == 'true':
+                shturmanlog('Info', f'{ctx.author} enabled duplicate mod checking on the subbreddit, {subreddit_name}.')
+                dmlloop = True
+                await ctx.send(
+                    "{1} {0.author.mention}!  I will now check for duplicate moderator "
+                    "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+                client.loop.create_task(dupe_mod_log('dm'))
+            elif arg1.lower() == 'false':
+                dmlloop = False
+                shturmanlog('Info', f'{ctx.author} disabled duplicate mod checking on the subbreddit, {subreddit_name}.')
+                await ctx.send(
+                    "{1} {0.author.mention}!  I will no longer check for duplicate "
+                    "moderator actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+            else:
+                await ctx.send(
+                    "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+        elif dmltype != 'dm':  # Checks to see if we've reporting to a channel.
+            print("Searching for DML channel")
+            # Check to see if a channel is set for the server before turning on the log checker.
+            for data in allserverdata:
+                if ctx.message.guild.id in data.values() and data['DML Channel']:
+                    finder = True
+            if finder is True:  # Checks to see if we've found a DML Channel
+                if arg1.lower() == 'true':
+                    shturmanlog('Info', f'{ctx.author} enabled duplicate mod checking on the subbreddit, {subreddit_name}.')
+                    dmlloop = True
+                    await ctx.send(
+                        "{1} {0.author.mention}!  I will now check for duplicate moderator "
+                        "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+                    client.loop.create_task(dupe_mod_log(data['DML Channel']))
+                elif arg1.lower() == 'false':
+                    dmlloop = False
+                    shturmanlog('Info', f'{ctx.author} disabled duplicate mod checking on the subbreddit, {subreddit_name}.')
+                    await ctx.send(
+                        "{1} {0.author.mention}!  I will no longer check for duplicate "
+                        "moderator actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+                else:
+                    await ctx.send(
+                        "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+            elif finder is False:  # Sends a message if we don't have a DML channel for the server first
+                await ctx.send("{1} {0.author.mention}!  Please set a channel using `%dmlchannel add` first, "
+                               "otherwise I won't be able to report things!.".format(ctx, randhello))
+            else:  # Sends a message saying we don't recognize the command.
+                await ctx.send(
+                    "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+        else:  # Just for error catching, should not happen.
+            await ctx.send(
+                "{1} {0.author.mention}!  Please set a notification type first!.".format(ctx, randhello))
 
 
 @client.command()  # Command to update the channel for the duplicate moderator log checker
 async def dmlchannel(ctx, arg1):
-    global hellomsg
+    global hellomsg, approvedusers
     randhello = random.choice(hellomsg)
-    friendlyserver = str(ctx.message.guild.name)
-    servernameID = str(ctx.message.guild.id)
-    dmlchannel = str(ctx.message.channel.id)
-    # Check to see if there's existing and if so, save the dev channel so we can re-add it during the update.
-    allserverdata = serversheet.get_all_records()
-    devchannel = ''
-    for data in allserverdata:
-        print("looking for Dev Channel in our list")
-        if data['Dev Channel']:
-            devchannel = str(data['Dev Channel'])
-            break
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        print("Didn't find a pre-existing Dev Channel")
-    channelupdate = [friendlyserver, servernameID, devchannel, dmlchannel]
-    if arg1.lower() == 'add':
-        resultsadddata = adddata(serversheet, channelupdate, True)
-        if resultsadddata == 'Update':
-            shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
-            await ctx.send("{1} {0.author.mention}!  It seems a channel was already set for this server.  "
-                           "I've updated my records and will post notifications here now.".format(ctx, randhello))
-        if resultsadddata == 'Append':
-            shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
-            await ctx.send("{1} {0.author.mention}!  I've updated my records and "
-                           "will post notifications here now.".format(ctx, randhello))
-    elif arg1.lower() == 'remove':
-        removechannel = removedata(serversheet, int(dmlchannel))
-        if removechannel:
-            shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
-            await ctx.send("{1} {0.author.mention}!  I will no "
-                           "longer post notifications to this channel.".format(ctx, randhello))
-        elif not removechannel:
-            shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
-            await ctx.send("{1} {0.author.mention}!  I don't think I was "
-                           "posting notifications to this channel to begin with.".format(ctx, randhello))
+        friendlyserver = str(ctx.message.guild.name)
+        servernameID = str(ctx.message.guild.id)
+        dmlchannel = str(ctx.message.channel.id)
+        # Check to see if there's existing and if so, save the dev channel so we can re-add it during the update.
+        allserverdata = serversheet.get_all_records()
+        devchannel = ''
+        for data in allserverdata:
+            print("looking for Dev Channel in our list")
+            if data['Dev Channel']:
+                devchannel = str(data['Dev Channel'])
+                break
+        else:
+            print("Didn't find a pre-existing Dev Channel")
+        channelupdate = [friendlyserver, servernameID, devchannel, dmlchannel]
+        if arg1.lower() == 'add':
+            resultsadddata = adddata(serversheet, channelupdate, True)
+            if resultsadddata == 'Update':
+                shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
+                await ctx.send("{1} {0.author.mention}!  It seems a channel was already set for this server.  "
+                               "I've updated my records and will post notifications here now.".format(ctx, randhello))
+            if resultsadddata == 'Append':
+                shturmanlog('Info', f'{ctx.author} Has updated the DML channel for {friendlyserver} to: {dmlchannel}')
+                await ctx.send("{1} {0.author.mention}!  I've updated my records and "
+                               "will post notifications here now.".format(ctx, randhello))
+        elif arg1.lower() == 'remove':
+            removechannel = removedata(serversheet, int(dmlchannel))
+            if removechannel:
+                shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
+                await ctx.send("{1} {0.author.mention}!  I will no "
+                               "longer post notifications to this channel.".format(ctx, randhello))
+            elif not removechannel:
+                shturmanlog('Info', f'{ctx.author} Has removed the DML channel for {friendlyserver}. It was: {dmlchannel}')
+                await ctx.send("{1} {0.author.mention}!  I don't think I was "
+                               "posting notifications to this channel to begin with.".format(ctx, randhello))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I don't understand your command!".format(ctx, randhello))
+
+
+@client.command()  # Command to determine whether the DML reporter will DM or report to a channel
+async def dmltype(ctx, arg1):
+    global hellomsg, subreddit_name, dmltype, approvedusers
+    randhello = random.choice(hellomsg)
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send("{1} {0.author.mention}!  I don't understand your command!".format(ctx, randhello))
+        if arg1.lower() == 'dm':
+            dmltype = 'dm'
+            shturmanlog('Info', f'{ctx.author} has changed DML reporting to a Direct Message.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now DM users instead of reporting to a channel.".format(ctx, randhello))
+        elif arg1.lower() == 'channel':
+            dmltype = 'channel'
+            shturmanlog('Info', f'{ctx.author} has changed DML reporting to a Channel.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now report my findings to a channel instead of DM.  "
+                "Please make sure to pick a channel you want me to report to!".format(ctx, randhello))
+        else:
+            await ctx.send(
+                "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
 
 
 @client.command()  # Command to enable/disable the potential R5 violation checker
 async def r5(ctx, arg1):
-    global hellomsg, subreddit_name, redditlogin, rule5loop
+    global hellomsg, subreddit_name, redditlogin, rule5loop, approvedusers
     randhello = random.choice(hellomsg)
-    if arg1.lower() == 'true':
-        rule5loop = True
-        shturmanlog('Info', f'{ctx.author} enabled R5 checker on the subbreddit, {subreddit_name}.')
+    if ctx.author.nick not in approvedusers:
         await ctx.send(
-            "{1} {0.author.mention}!  I will now check R5 violations "
-            "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
-        client.loop.create_task(rule_5_checker(redditlogin))
-    elif arg1.lower() == 'false':
-        rule5loop = False
-        shturmanlog('Info', f'{ctx.author} disabled checking for R5 violations on the subbreddit, {subreddit_name}.')
-        await ctx.send(
-            "{1} {0.author.mention}!  I will no longer check for R5 violations "
-            "on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
     else:
-        await ctx.send("{1} {0.author.mention}!  I didn't understand your command!".format(ctx, randhello))
+        if arg1.lower() == 'true':
+            rule5loop = True
+            shturmanlog('Info', f'{ctx.author} enabled R5 checker on the subbreddit, {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now check R5 violations "
+                "actions on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+            client.loop.create_task(rule_5_checker(redditlogin))
+        elif arg1.lower() == 'false':
+            rule5loop = False
+            shturmanlog('Info', f'{ctx.author} disabled checking for R5 violations on the subbreddit, {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longer check for R5 violations "
+                "on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I didn't understand your command!".format(ctx, randhello))
+
+
+@client.command()  # Command to enable/disable the potential R5 violation checker
+async def r5remove(ctx, arg1):
+    global hellomsg, subreddit_name, redditlogin, rule5removal, approvedusers
+    randhello = random.choice(hellomsg)
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        if arg1.lower() == 'true':
+            rule5removal = True
+            shturmanlog('Info', f'{ctx.author} enabled R5 automatic removal of posts on the subbreddit, {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now remove R5 violations automatically "
+                "on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+        elif arg1.lower() == 'false':
+            rule5removal = False
+            shturmanlog('Info', f'{ctx.author} disabled R5 removal of posts on the subbreddit, {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longer remove R5 violations automatically "
+                "on the subreddit, {2}.".format(ctx, randhello, subreddit_name))
+        else:
+            await ctx.send("{1} {0.author.mention}!  I didn't understand your command!".format(ctx, randhello))
 
 #########################################################################################################
 # Global Configuration variables
@@ -905,15 +1066,21 @@ SleepyTime = TimeBackChecker  # Dictates how many seconds the script should slee
 redditlooper = False  # True/False will stop the looper from running
 nextscan = ''  # Establishing global varible to track the next run time for the Reddit Scanner
 fhbinterval = 60  # Time interval for the Flair Helper Bot looper
-fhblooper = True  # Determines whether or not Flair Helper Bot will run
+fhblooper = False  # Determines whether or not Flair Helper Bot will run
 dmlinterval = 60  # Sets the time window to see if duplicate mod actions have been taken
 dmlloop = False
+dmltype = 'dm'  # Used to change whether a DM or Channel notification is sent.
 # dmlchannel = 734805584968417321  # The text channel that the bot will alert moderators in # Test server ATM
 rule5loop = False
+rule5removal = False
 raspi_temp = float('40')  # Establishing a global temp float variable
 subreddit_name = 'EFTDesign'
 devcommentsticky = False
+founddata = False
+approvedusers = set()  # Creates an empty set, with only me in it.
+approvedusers.add('Fwopp')
 redditlogin = bot_login()  # Logs into reddit and provides PRAW access
+modchannel = 734805584968417321  # Hardcoded to the 'reddit-chat' Channel in Mod Discord
 #########################################################################################################
 # Random messages for Discord greetings
 #########################################################################################################
