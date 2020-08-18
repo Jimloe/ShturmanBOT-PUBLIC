@@ -237,7 +237,7 @@ async def reddit_loop():
 
 
 async def flair_helper_bot(redditlogin):
-    global subreddit_name, fhblooper, fhbinterval, hellomsg
+    global subreddit_name, fhblooper, fhbinterval, hellomsg, fhbmod
     print('Started the FHB!')
 
     randhello = random.choice(hellomsg)
@@ -256,27 +256,35 @@ async def flair_helper_bot(redditlogin):
         flairtext = flair['text']
         flairmsg += f'!flair{fditerator}|```{flairtext}```\n'
         fditerator += 1
+    moderatorset = set()
+    for moderator in redditlogin.subreddit(subreddit_name).moderator():  # Generates a set of all moderators on the sub.
+        moderatorset.add(moderator)
 
     while fhblooper:
+        activity = discord.Activity(name='for Flairs | %about', type=discord.ActivityType.watching)
+        await client.change_presence(activity=activity)
         submissions = redditlogin.subreddit(subreddit_name).new(limit=15)  # Grab the newest 15 submissions
         for submission in submissions:  # Loop through each one
             if str(submission.link_flair_text).lower() == 'none':
-                print('Caught a post!', submission.title, submission.link_flair_text)
-                fhbtime = str(datetime.datetime.utcnow().timestamp()).split(".")[0]
-                greeting = "{0} {1}!, \n\n".format(randhello, submission.author)
-                footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
-                            "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
-                            "error&message=I'm writing to you about the following submission: https://old.reddit.com{0}. " \
-                            "%0D%0D ShturmanBOT has removed my post by mistake)*".format(submission.permalink)
-                commentremovalmsg = greeting + removalreason + flairmsg + footermsg  # Construct removal message
-                submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
-                submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')  # Send message
-                # Check for the message we just sent and then log it to Google Sheets
-                sentmsgs = redditlogin.redditor("ShturmanBOT").comments.new(limit=1)
-                for message in sentmsgs:
-                    sentmsg = message.id
-                datatoadd = [submission.title, submission.id, sentmsg, submission.permalink, fhbtime]
-                adddata(modposts, datatoadd, True)
+                if fhbmod is True and submission.author in moderatorset:
+                    continue
+                else:
+                    print('Caught a post!', submission.title, submission.link_flair_text)
+                    fhbtime = str(datetime.datetime.utcnow().timestamp()).split(".")[0]
+                    greeting = "{0} {1}!, \n\n".format(randhello, submission.author)
+                    footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
+                                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
+                                "error&message=I'm writing to you about the following submission: https://old.reddit.com{0}. " \
+                                "%0D%0D ShturmanBOT has removed my post by mistake)*".format(submission.permalink)
+                    commentremovalmsg = greeting + removalreason + flairmsg + footermsg  # Construct removal message
+                    submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
+                    submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')  # Send message
+                    # Check for the message we just sent and then log it to Google Sheets
+                    sentmsgs = redditlogin.redditor("ShturmanBOT").comments.new(limit=1)
+                    for message in sentmsgs:
+                        sentmsg = message.id
+                    datatoadd = [submission.title, submission.id, sentmsg, submission.permalink, fhbtime]
+                    adddata(modposts, datatoadd, True)
 
         # Now check previous submissions to see if they've been flaired
         allmodposts = modposts.get_all_records()  # Get a list of all post Mod actions have been performed on
@@ -286,20 +294,24 @@ async def flair_helper_bot(redditlogin):
             posthistory = modaction['ID']
             commenthistory = modaction['Comment']
             subpermalink = modaction['Permalink']
-            modtime = datetime.datetime.utcfromtimestamp(int(modaction['Time']))
+            modtime = datetime.datetime.fromtimestamp(int(modaction['Time']))
+            print('Mod time on post is:', modtime)
             prevsubission = redditlogin.submission(posthistory)
             try:
                 deletecheck = str(prevsubission.author.name)
                 print(deletecheck)
                 rightnow = datetime.datetime.utcnow()
+                print('Right now is:', rightnow)
                 delta = datetime.timedelta(seconds=1200)
-                cutofftime = rightnow - delta
+                print('The Delta is:', delta)
+                cutofftime = modtime + delta
+                print('The cutoff time is:', cutofftime)
                 if str(prevsubission.link_flair_text).lower() != 'none':  # Checks to see if there's any flair.
                     prevsubission.mod.approve()
                     redditlogin.comment(commenthistory).delete()
                     removedata(modposts, commenthistory)
                     redditlogin.submission(posthistory).report("FHB Approved - Need content check!")
-                elif modtime < cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
+                elif modtime > cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
                     print("Time exceeded on the post, removing and leaving comment")
                     editpost = redditlogin.comment(commenthistory)  # Get the comment to edit
                     newbody = "Sorry, your recent post still does not have any flair and was " \
@@ -349,6 +361,8 @@ async def flair_helper_bot(redditlogin):
                     else:  # Ignore the message as we don't care about it.
                         item.mark_read()
 
+        activity = discord.Activity(name='Waiting game | %about', type=discord.ActivityType.playing)
+        await client.change_presence(activity=activity)
         print("Finished checking for flairs, going to sleep")
         await asyncio.sleep(fhbinterval)
     if not fhblooper:
@@ -436,6 +450,8 @@ async def rule_5_checker(redditlogin):
     urlmatch = ["youtube.com", "twitch.tv"]
     rule5loop = True
     while rule5loop:  # Create a loop so we can exit out of this via Discord command
+        activity = discord.Activity(name='R5 submissions | %about', type=discord.ActivityType.watching)
+        await client.change_presence(activity=activity)
         print("Checking subreddit for R5 submissions")
         submissions = redditlogin.subreddit(subreddit_name).new(limit=15)  # Grab the newest 15 submissions
         StartRunTime = datetime.datetime.utcnow()  # Establish current run time to compare 2 day cutoff date to
@@ -483,6 +499,9 @@ async def rule_5_checker(redditlogin):
 
                                 else:  # If we don't have post removal set, then we want to report the post.
                                     submission.report("R5 violation check!")
+
+        activity = discord.Activity(name='Waiting game | %about', type=discord.ActivityType.playing)
+        await client.change_presence(activity=activity)
         print("Finished R5 checking, sleeping...")
         await asyncio.sleep(30)
 
@@ -543,19 +562,19 @@ async def commands(ctx):
         "`%adduser Xusername TRUE/FALSE` - Adds/Updates a user to the tracked user list.  TRUE/FALSE notates whether or not a sticky will be created in the thread they've posted in.\n"
         "`%removeuser Xusername` - Removes a user from tracked user list\n\n"
         "`%devtracker True/False` - Enables or disables dev tracking and Discord notifications\n"
-        "`%devtrackerstatus` - Shows whether or not the dev tracking and Discord notifications are running.\n"
         "`%devchannel add/remove` - Adds or removes a channel for Dev post notifications.\n"
         "`%updatetime` - Updates the time interval for the Reddit scans\n\n"
         "`%commentsticky True/False` - Enables or disables the Reddit sticky comment functionality.  References the tracked users list.\n"
-        "`%commentstickystatus` - Shows whether or not the Reddit sticky comment functionality is running.\n\n"
         "`%nextscan` - Displays next run time\n\n"
         "`%fhb True/False` - Enables/disables the enforcement of flairs on subreddit posts.\n"
-        "`%fhbint number` - Changes the interval of Flair Helper.\n\n"
+        "`%fhbint number` - Changes the interval of Flair Helper.\n"
+        "`%fhbmodignore True/False` - Determines if FHB will ignore moderator posts.\n\n"
         "`%dml True/False` - Enables/disables checking the mod log for duplicate actions.\n"
         "`%dmlchannel add/remove` - Adds or removes a channel for Duplicate Mod Log notifications.\n"
         "`%dmltype DM/Channel` - Specifies whether you want reports to go to a channel or to DM the users.\n\n"
         "`%r5 True/False` - Enables/disables checking new submissions for potential R5 violations.\n"
         "`%r5remove True/False` - Enables/disables automatic removal of posts.\n\n"
+        "`%whatsrunning` - Shows which modules are running.\n\n"
         "`%monitor` - See how hot my server is running at\n\n"
         "`%updatemodlist` - Scan the mod Discord and see if there's been any changes in the Moderator roles.\n\n"
         "`%updatesubreddit Xsubname` - Change the subreddit that the bot performs MODERATION actions on.  This does not affect dev tracking.".format(ctx, randhello))
@@ -720,19 +739,6 @@ async def commentsticky(ctx, arg1):
             await ctx.send("{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello))
 
 
-@client.command()  # Gets the running status of the dev comment sticky
-async def commentstickystatus(ctx):
-    global devcommentsticky, hellomsg
-    randhello = random.choice(hellomsg)
-    if devcommentsticky:
-        await ctx.send(
-            "{1} {0.author.mention}!  I am currently stickying comments in Reddit threads.  FYI: This requires the "
-            "devtracker to be turned on!".format(ctx, randhello))
-    if not devcommentsticky:
-        await ctx.send(
-            "{1} {0.author.mention}!  I am currently NOT stickying comments in Reddit threads.".format(ctx, randhello))
-
-
 @client.command()  # Command to turn on / off the dev tracker
 async def devtracker(ctx, arg1):
     global redditlooper, hellomsg, approvedusers
@@ -759,17 +765,38 @@ async def devtracker(ctx, arg1):
 
 
 @client.command()  # Gets the running status of the dev tracker
-async def devtrackerstatus(ctx):
-    global redditlooper, hellomsg
+async def whatsrunning(ctx):
+    global redditlooper, hellomsg, devcommentsticky, fhblooper, dmlloop, dmltype, rule5loop, rule5removal
     randhello = random.choice(hellomsg)
+    runningset = set()
     if redditlooper:
+        runningset.add('Dev Tracker\n')
+    if devcommentsticky:
+        runningset.add('Dev Comment Sticky\n')
+    if fhblooper:
+        if fhbmod:
+            runningset.add('FlairHelperBot - Ignoring Mod posts\n')
+        else:
+            runningset.add('FlairHelperBot - Check all posts')
+    if dmlloop:
+        if dmltype == 'dm':
+            runningset.add('Duplicate Mod Checker - DM\n')
+        else:
+            runningset.add('Duplicate Mod Checker - Discord Channel\n')
+    if rule5loop:
+        if rule5removal:
+            runningset.add('R5 Auto Remove\n')
+        else:
+            runningset.add('R5 Reporting\n')
+    if bool(runningset) is False:
         await ctx.send(
-            "{1} {0.author.mention}!  I am currently tracking dev "
-            "comments and posting Discord notifications.".format(ctx, randhello))
-    if not redditlooper:
+            "{1} {0.author.mention}!  Nothing is currently running.".format(ctx, randhello))
+    else:
         await ctx.send(
-            "{1} {0.author.mention}!  I am currently NOT tracking dev "
-            "comments and posting Discord notifications.".format(ctx, randhello))
+            "{1} {0.author.mention}!  I am currently running "
+            "the following functions:\n".format(ctx, randhello))
+        for item in runningset:
+            await ctx.send(item)
 
 
 @client.command()  # Changes the time interval for the dev tracker
@@ -874,6 +901,31 @@ async def fhbint(ctx, arg1):
                 "{1} {0.author.mention}!  I will now check posts for flair every {2} seconds.".format(ctx, randhello, arg1))
             shturmanlog('Info', f'{ctx.author} has changed the FHB internval to , {arg1}.')
             fhbinterval = arg1
+        else:
+            await ctx.send(
+                "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
+
+
+@client.command()  # Command to change the flairhelperbot moderator interaction
+async def fhbmodignore(ctx, arg1):
+    global hellomsg, fhbmod, approvedusers
+    randhello = random.choice(hellomsg)
+    if ctx.author.nick not in approvedusers:
+        await ctx.send(
+            "{1} {0.author.mention}!  You're not allowed to do that.".format(ctx, randhello))
+    else:
+        if arg1.lower() == 'true':
+            shturmanlog('Info', f'{ctx.author} enabled ignoring mod posts for flair enforcement on the sub: {subreddit_name}.')
+            fhbmod = True
+            await ctx.send(
+                "{1} {0.author.mention}!  I will now ignore "
+                "moderator posts for flairs on the sub, {2}.".format(ctx, randhello, subreddit_name))
+        elif arg1.lower() == 'false':
+            fhbmod = False
+            shturmanlog('Info', f'{ctx.author} disabled ignoring mod posts for flair enforcement on the sub: {subreddit_name}.')
+            await ctx.send(
+                "{1} {0.author.mention}!  I will no longer ignore "
+                "moderator posts for flairs on the sub, {2}.".format(ctx, randhello,subreddit_name))
         else:
             await ctx.send(
                 "{1} {0.author.mention}!  I didn't recognize your command.".format(ctx, randhello, TimeBackChecker))
@@ -1067,10 +1119,10 @@ redditlooper = False  # True/False will stop the looper from running
 nextscan = ''  # Establishing global varible to track the next run time for the Reddit Scanner
 fhbinterval = 60  # Time interval for the Flair Helper Bot looper
 fhblooper = False  # Determines whether or not Flair Helper Bot will run
+fhbmod = False  # Determines whether or not Flair Helper Bot will ignore moderator posts.
 dmlinterval = 60  # Sets the time window to see if duplicate mod actions have been taken
 dmlloop = False
 dmltype = 'dm'  # Used to change whether a DM or Channel notification is sent.
-# dmlchannel = 734805584968417321  # The text channel that the bot will alert moderators in # Test server ATM
 rule5loop = False
 rule5removal = False
 raspi_temp = float('40')  # Establishing a global temp float variable
@@ -1080,7 +1132,7 @@ founddata = False
 approvedusers = set()  # Creates an empty set, with only me in it.
 approvedusers.add('Fwopp')
 redditlogin = bot_login()  # Logs into reddit and provides PRAW access
-modchannel = 734805584968417321  # Hardcoded to the 'reddit-chat' Channel in Mod Discord
+modchannel = 734805584968417321  # The text channel that the bot will alert moderators in # Test server ATM
 #########################################################################################################
 # Random messages for Discord greetings
 #########################################################################################################
