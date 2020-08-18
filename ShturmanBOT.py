@@ -311,7 +311,7 @@ async def flair_helper_bot(redditlogin):
                     redditlogin.comment(commenthistory).delete()
                     removedata(modposts, commenthistory)
                     redditlogin.submission(posthistory).report("FHB Approved - Need content check!")
-                elif modtime > cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
+                elif rightnow > cutofftime:  # Checking to see if the post is older than 20m.  If so delete!
                     print("Time exceeded on the post, removing and leaving comment")
                     editpost = redditlogin.comment(commenthistory)  # Get the comment to edit
                     newbody = "Sorry, your recent post still does not have any flair and was " \
