@@ -30,12 +30,6 @@ async def on_ready():
     print('The bot is ready!')
 
 
-@client.event
-async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
-        await ctx.send(f'Sorry {ctx.author.mention}, I didn\'t recognize your command! ')
-
-
 #########################################################################################################
 # Discord Commands
 #########################################################################################################
