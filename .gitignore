@@ -1,3 +1,6 @@
 # Ignoring credential files
 ShturmanBOTcreds.json
 config
+
+# Ignoring the original program
+ShturmanBOT-OLD.py
