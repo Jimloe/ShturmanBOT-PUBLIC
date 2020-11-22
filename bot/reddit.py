@@ -18,7 +18,7 @@ def reddit_auth():
 
 def verify_mod(whotoverify):
     modset = set()
-    redditauth = reddit_auth()
+    redditauth = reddit_auth()  # Create the authenticator object to access reddit
     for moderator in redditauth.subreddit('EscapefromTarkov').moderator():  # Generates a set of all moderators on the sub.
         modset.add(moderator.name)
     print(modset)
@@ -26,3 +26,10 @@ def verify_mod(whotoverify):
         return True
     else:
         return False
+
+
+def get_all_mods():
+    moderatorset = set()
+    redditauth = reddit_auth()  # Create the authenticator object to access reddit
+    for moderator in redditauth.subreddit('EscapefromTarkov').moderator():  # Generates a set of all moderators on the sub.
+        moderatorset.add(moderator)
