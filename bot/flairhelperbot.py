@@ -41,7 +41,7 @@ class FlairHelperBot(shturclass.Shturclass):
                 fditerator += 1
 
             while True:  # Always loop this
-                print("Starting Loop!")
+                print("FHB Loop starting!")
                 submissions = redditauth.subreddit(self.subreddit).new(limit=15)  # Grab the newest 15 submissions
                 nettest = False
                 while not nettest:
