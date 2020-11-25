@@ -5,12 +5,15 @@ from bot import reddit
 from praw.models.util import BoundedSet
 from bot import shturclass
 
+# Gotta change the action to only report/remove the most recent post and not take action on the older post.  Currently
+# it is reporting both posts, and removes all but the last post.  It also leaves removal messages twice on the first video.
+
 
 class MediaSpam(shturclass.Shturclass):
     mods = {'Fwopp', 'bxxxxxxxs'}
     redditauth = reddit.reddit_auth()
 
-    def __init__(self, subreddit, running=False, ignoremod=False, interval=30, removepost=False):
+    def __init__(self, subreddit, running=False, ignoremod=False, interval=30, removepost='report'):
         super().__init__(subreddit, running, ignoremod, interval)
         self.removepost = removepost
         self.interval = interval
@@ -28,12 +31,16 @@ class MediaSpam(shturclass.Shturclass):
                 timecutoff = startruntime - delta
                 for submission in submissions:  # Loop through each subreddit submission
                     if submission.id in newids:  # Checks to see if our item is in the set we've built
+                        # print(f'Submission:{submission.title}  is in newids, lets skip it')
                         continue  # It has found a match, so continue to the next submission in the for loop
+                    # print(f'Submission:{submission.title} isn\'t in new IDs, so lets add it.')
                     newids.add(submission.id)  # We haven't found a match above, so add it to the BoundedSet for next time
                     for url in urlmatch:  # Loop through youtube & twitch to see if we've got youtube/twitch submissions
                         if url in submission.url:  # Finds a match
+                            # print('Found a youtube/twitch link')
                             subauthor = submission.author  # Grabs the author.  We want to check their history
                             # Create a user object and check their post history
+                            # print(f'Checking history of {subauthor}')
                             for userhistory in self.redditauth.redditor(str(subauthor)).submissions.new(limit=10):
                                 # Checks to see if a submission has been removed, if so we want to ignore it
                                 try:
@@ -44,16 +51,17 @@ class MediaSpam(shturclass.Shturclass):
                                 # Checks to see if submissions are in our subreddit
                                 # If they are, make sure the domain matches twitch or youtube
                                 if userhistory.subreddit_name_prefixed == f'r/{self.subreddit}' and userhistory.domain == 'twitch.tv' or userhistory.domain == 'youtube.com':
+                                    # print('Found a potential match in the sub')
                                     # Make sure that our 2 day cutoff is observed.
                                     # We also want to make sure we're not matching against the original submission.
                                     # Compare history with our original permalink
-                                    if timecutoff < datetime.datetime.fromtimestamp(
-                                            userhistory.created_utc) and userhistory.permalink != submission.permalink:
-                                        print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain,
-                                              userhistory.permalink,
-                                              datetime.datetime.fromtimestamp(userhistory.created_utc))
+                                    if timecutoff < datetime.datetime.fromtimestamp(userhistory.created_utc) and userhistory.permalink != submission.permalink:
+                                        # print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain,
+                                        #       userhistory.permalink,
+                                        #       datetime.datetime.fromtimestamp(userhistory.created_utc), "| Taking action on the post")
                                         #  Do things like report the post
-                                        if self.removepost:  # Checks to see if we want to remove the post
+                                        if self.removepost.lower() == 'remove':  # Checks to see if we want to remove the post
+                                            print('Found one, going to remove the post and leave a message.')
                                             randhello = random.choice(self.hellomsg)
                                             bodymsg = f'{randhello},\n\nLimit posting of your own linked content to one (1) video ' \
                                                       f'every two (2) days.  Those excessively posting their own content must ' \
@@ -67,8 +75,9 @@ class MediaSpam(shturclass.Shturclass):
                                                         f'%0D%0D ShturmanBOT has removed my post by mistake)*'
                                             commentremovalmsg = bodymsg + footermsg
                                             submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)
-                                            submission.mod.send_removal_message(commentremovalmsg, title='ignored',type='public')
+                                            submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')
                                         else:  # If we don't have post removal set, then we want to report the post.
+                                            print('Found one, reporting the post')
                                             submission.report("R5 violation check!")
                 print(f'Finished R5 checking, sleeping for {self.interval}')
                 await asyncio.sleep(self.interval)
