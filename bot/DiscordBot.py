@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from bot import shturclass
 from bot import reddit
-from bot import flairhelperbot, media_spam, dupe_mod_log
+from bot import flairhelperbot, dupe_mod_log, media_spam
 
 
 intents = discord.Intents.default()  # This sets up the new intentions in 1.5
@@ -15,6 +15,7 @@ moduleset = {'fhb', 'mediaspam'}
 fhbloop = ''
 medialoop = ''
 dmlloop = ''
+subredditmod = 'EFTDesign'
 
 #########################################################################################################
 # Discord bot events
@@ -59,14 +60,14 @@ async def fhb(ctx, runprgm, ignoremods='True', interval=30):
         if runprgm.lower() == 'stop':
             try:
                 fhbloop.cancel()  # Canceles the Asyncio Task that was created
-                await ctx.send(f'{randhello} {person}!  I will no longer enforce flairs on the subreddit, PLACEHOLDER.')
+                await ctx.send(f'{randhello} {person}!  I will no longer enforce flairs on the subreddit, {subredditmod}.')
             except:
                 await ctx.send(f'{randhello} {person}!  I don\'t think that\'s currently running.')
         else:
             try:
                 interval = int(interval)  # Validate if a number was entered
                 if (runprgm.lower() == 'start') and (ignoremods.lower() == 'false' or ignoremods.lower() == 'true') and (isinstance(interval, int)):
-                    fhbstart = flairhelperbot.FlairHelperBot('EFTDesign', running=False, ignoremod=ignoremods.capitalize(), interval=interval)  # Create the FHB object to do stuff with
+                    fhbstart = flairhelperbot.FlairHelperBot(subredditmod, running=False, ignoremod=ignoremods.capitalize(), interval=interval)  # Create the FHB object to do stuff with
                     await ctx.send(f'{randhello} {person}!  I will now enforce flairs on submission in the subreddit, {fhbstart.subreddit}.')
                     fhbloop = asyncio.create_task(fhbstart.run(True))  # Have to do the create_task, otherwise we can't cancel it later
                     await fhbloop
@@ -87,15 +88,15 @@ async def mediaspam(ctx, runprgm, ignoremod='', interval=30, removepost=''):
         if runprgm.lower() == 'stop':
             try:
                 medialoop.cancel()  # Canceles the Asyncio Task that was created
-                await ctx.send(f'{randhello} {person}!  I will no longer enforce flairs on the subreddit, PLACEHOLDER.')
+                await ctx.send(f'{randhello} {person}!  I will no longer watch for media spam, {subredditmod}.')
             except:
                 await ctx.send(f'{randhello} {person}!  I don\'t think that\'s currently running.')
         else:
             try:
                 interval = int(interval)  # Validate if a number was entered
                 if (runprgm.lower() == 'start') and (ignoremod.lower() == 'true' or ignoremod.lower() == 'false') and (isinstance(interval, int) and (removepost.lower() == 'report' or removepost.lower() == 'remove')):
-                    msstart = media_spam.MediaSpam('EFTDesign', running=False, ignoremod=ignoremod.capitalize(), interval=interval, removepost=removepost.capitalize())  # Create the mediaspam object to do stuff with
-                    await ctx.send(f'{randhello} {person}!  I will now enforce flairs on submission in the subreddit, {msstart.subreddit}.')
+                    msstart = media_spam.MediaSpam(subredditmod, running=False, ignoremod=ignoremod.capitalize(), interval=interval, removepost=removepost.capitalize())  # Create the mediaspam object to do stuff with
+                    await ctx.send(f'{randhello} {person}!  I will now watch for media being spammed to the sub, {msstart.subreddit} and will {removepost} them.')
                     medialoop = asyncio.create_task(msstart.run(True))  # Have to do the create_task, otherwise we can't cancel it later
                     await medialoop
                 else:
@@ -105,27 +106,30 @@ async def mediaspam(ctx, runprgm, ignoremod='', interval=30, removepost=''):
 
 
 @client.command()  # Command to turn on / off the dupe_mod_log
-async def dml(ctx, runprgm, subreddit='EFTDesign', memberchannel=734804241994219605, interval=30):
+async def dml(ctx, runprgm, subreddit=subredditmod, memberchannel=734804241994219605, interval=30):
     global dmlloop
     randhello = random.choice(shturclass.Shturclass.hellomsg)
     person = ctx.author.mention
-
-    if runprgm.lower() == 'stop':
-        dmlloop.cancel()
-    elif runprgm.lower() == 'start':
-        memberchannelobj = client.get_channel(memberchannel)  # Convert our ID to a channel object
-        # We want to generate a list of moderators on Discord from the provided memberchannel, and match them up to our Reddit admins.
-        nickdb = []  # Establishes empty list for storing multiple dicts+
-        for member in memberchannelobj.members:  # Loop through all members in the text channel and create our list
-            userobj = client.get_user(member.id)  # Get the user object so we can send them a DM later.
-            nickdb.append({"nick": member.nick, "mention": member.mention, "id": member.id, "dmobj": userobj})
-        # Create the dmlstart object to run the task.
-        dmlloop = dupe_mod_log.DupeModLog(subreddit, userobj=nickdb, running=False, interval=interval)
-        await ctx.send(f'{randhello} {person}!  I will now watch for duplicate moderator actions.')
-        dmlloop = asyncio.create_task(dmlloop.run(True))  # Have to do the create_task, otherwise we can't cancel it later
-        await dmlloop
+    if ctx.author.nick not in media_spam.MediaSpam.mods:
+        await ctx.send(f'{randhello} {person}!  You\'re not allowed to do that.')
     else:
-        await ctx.send(f'{randhello} {person}!  I didn\'t understand your command.')
+        if runprgm.lower() == 'stop':
+            await ctx.send(f'{randhello} {person}!  I will no longer watch for duplicate mod actions.')
+            dmlloop.cancel()
+        elif runprgm.lower() == 'start':
+            memberchannelobj = client.get_channel(memberchannel)  # Convert our ID to a channel object
+            # We want to generate a list of moderators on Discord from the provided memberchannel, and match them up to our Reddit admins.
+            nickdb = []  # Establishes empty list for storing multiple dicts+
+            for member in memberchannelobj.members:  # Loop through all members in the text channel and create our list
+                userobj = client.get_user(member.id)  # Get the user object so we can send them a DM later.
+                nickdb.append({"nick": member.nick, "mention": member.mention, "id": member.id, "dmobj": userobj})
+            # Create the dmlstart object to run the task.
+            dmlloop = dupe_mod_log.DupeModLog(subreddit, userobj=nickdb, running=False, interval=interval)
+            await ctx.send(f'{randhello} {person}!  I will now watch for duplicate moderator actions.')
+            dmlloop = asyncio.create_task(dmlloop.run(True))  # Have to do the create_task, otherwise we can't cancel it later
+            await dmlloop
+        else:
+            await ctx.send(f'{randhello} {person}!  I didn\'t understand your command.')
 
 
 @client.command()  # Command to add mods from modules
