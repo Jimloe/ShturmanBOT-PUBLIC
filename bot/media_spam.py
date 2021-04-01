@@ -11,19 +11,17 @@ redditauth = reddit.reddit_auth()
 
 class MediaSpam(shturclass.Shturclass):
     mods = {'Fwopp', 'bxxxxxxxs'}
-    redditauth = reddit.reddit_auth()
 
-    def __init__(self, subreddit='r/EscapefromTarkov', running=False, ignoremod=False, interval=30, action='report'):
-        super().__init__(running, ignoremod, interval)
+    def __init__(self, subreddit, running=False, ignoremod=False, interval=30, action='report'):
+        super().__init__(subreddit, running, ignoremod, interval)
         self.action = action
         self.interval = interval
-        self.subreddit = subreddit
 
-    async def run(self, running, subreddit):
+    async def run(self, running):
         self.running = running
         removalreason = "Limit posting of linked content to once every 48 hours. Rule 5 applies  " \
                         "to whether or not you made the content you’re submitting. \n\n"
-        subredditstring = f'r/{subreddit}'
+        subredditstring = f'r/{self.subreddit}'
 
         if self.running:
             randhello = random.choice(self.hellomsg)
@@ -34,7 +32,7 @@ class MediaSpam(shturclass.Shturclass):
                 while not nettest:
                     try:
                         print(f"Checking new submissions.")
-                        for post in redditauth.subreddit(subreddit).new(limit=10):
+                        for post in redditauth.subreddit(self.subreddit).new(limit=10):
                             if post.permalink in newids:  # Checks to see if our item is in the set we've built
                                 continue  # It has found a match, so continue to the next submission in the for loop
                             print(f'Submission:{post.title} isn\'t in new IDs, so lets add it and then check it.')
@@ -68,7 +66,7 @@ class MediaSpam(shturclass.Shturclass):
                                         # Checks to see if submissions are in our subreddit
                                         # If they are, make sure the domain matches twitch or youtube
                                         if str(userhistory.subreddit_name_prefixed) == str(subredditstring) and userhistory.domain in urlmatch:
-                                            print(f'Found a potential match in the {subreddit}, checking if it is the OP')
+                                            print(f'Found a potential match in the {self.subreddit}, checking if it is the OP')
                                             # We want to make sure we're not matching against the original submission.
                                             if userhistory.permalink != caughtpost:
                                                 print(f'We found a match: "{userhistory.title}"')
