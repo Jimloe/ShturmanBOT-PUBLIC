@@ -16,7 +16,7 @@ fhbloop = ''
 medialoop = ''
 dmlloop = ''
 quewatchloop = ''
-subredditmod = 'EscapeFromTarkov'
+subredditmod = 'EscapefromTarkov'
 
 #########################################################################################################
 # Discord bot events
@@ -85,7 +85,7 @@ async def fhb(ctx, runprgm, ignoremods='True', interval=30):
 
 
 @client.command()  # Command to turn on / off the media spam checker
-async def mediaspam(ctx, runprgm, ignoremod='', interval=30, action=''):
+async def mediaspam(ctx, runprgm, ignoremods='', interval=30, action=''):
     global medialoop
     randhello = random.choice(shturclass.Shturclass.hellomsg)
     person = ctx.author.mention
@@ -101,8 +101,8 @@ async def mediaspam(ctx, runprgm, ignoremod='', interval=30, action=''):
         else:
             try:
                 interval = int(interval)  # Validate if a number was entered
-                if (runprgm.lower() == 'start') and (ignoremod.lower() == 'true' or ignoremod.lower() == 'false') and (isinstance(interval, int) and (action.lower() == 'report' or action.lower() == 'remove')):
-                    msstart = media_spam.MediaSpam(subredditmod, running=False, ignoremod=ignoremod.capitalize(), interval=interval, action=action.capitalize())  # Create the mediaspam object to do stuff with
+                if (runprgm.lower() == 'start') and (ignoremods.lower() == 'true' or ignoremods.lower() == 'false') and (isinstance(interval, int) and (action.lower() == 'report' or action.lower() == 'remove')):
+                    msstart = media_spam.MediaSpam(subredditmod, running=False, ignoremod=ignoremods.capitalize(), interval=interval, action=action.capitalize())  # Create the mediaspam object to do stuff with
                     await ctx.send(f'{randhello} {person}!  I will now watch for media being spammed to the sub, {msstart.subreddit} and will {action} them.')
                     medialoop = asyncio.create_task(msstart.run(True))  # Have to do the create_task, otherwise we can't cancel it later
                     await medialoop
