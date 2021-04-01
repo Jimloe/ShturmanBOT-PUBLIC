@@ -72,11 +72,11 @@ class FlairHelperBot(shturclass.Shturclass):
                                             Google_Logger.adddata('ModeratedPosts', datatoadd, True)
                                             nettest = True
                                         except:
-                                            print(f'Couldn\'t connect || Trying again in 5s')
+                                            print(f'FHB couldn\'t connect || Trying again in 5s')
                                             await asyncio.sleep(5)
                         nettest = True
                     except:
-                        print(f'Couldn\'t connect || Trying again in 5s')
+                        print(f'FHB couldn\'t connect || Trying again in 5s')
                         await asyncio.sleep(5)
                 # Now check previous submissions to see if they've been flaired
                 nettest = False
@@ -134,11 +134,11 @@ class FlairHelperBot(shturclass.Shturclass):
                                             else:
                                                 nettest = True
                                         except:
-                                            print(f'Couldn\'t connect || Trying again in 5s')
+                                            print(f'FHB couldn\'t connect || Trying again in 5s')
                                             await asyncio.sleep(5)
                         nettest = True
                     except:
-                        print(f'Couldn\'t connect || Trying again in 5s')
+                        print(f'FHB couldn\'t connect || Trying again in 5s')
                         await asyncio.sleep(5)
 
                 print("Finished checking old posts.")
@@ -171,7 +171,7 @@ class FlairHelperBot(shturclass.Shturclass):
                                         item.mark_read()
                         nettest = True
                     except:
-                        print(f'Couldn\'t connect || Trying again in 5s')
+                        print(f'FHB couldn\'t connect || Trying again in 5s')
                         await asyncio.sleep(5)
                 del submissions, submission, allmodposts, deletedthings
                 print(f'Finished scanning for posts, sleeping for {self.interval}')
