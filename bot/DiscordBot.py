@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from bot import shturclass
 from bot import reddit
-from bot import flairhelperbot, dupe_mod_log, media_spam, quewatch
+from bot import flairhelperbot, dupe_mod_log, media_spam
 
 
 intents = discord.Intents.default()  # This sets up the new intentions in 1.5
