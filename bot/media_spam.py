@@ -5,81 +5,99 @@ from bot import reddit
 from praw.models.util import BoundedSet
 from bot import shturclass
 
-# Gotta change the action to only report/remove the most recent post and not take action on the older post.  Currently
-# it is reporting both posts, and removes all but the last post.  It also leaves removal messages twice on the first video.
+# Authenticate to Reddit
+redditauth = reddit.reddit_auth()
 
 
 class MediaSpam(shturclass.Shturclass):
     mods = {'Fwopp', 'bxxxxxxxs'}
     redditauth = reddit.reddit_auth()
 
-    def __init__(self, subreddit, running=False, ignoremod=False, interval=30, removepost='report'):
-        super().__init__(subreddit, running, ignoremod, interval)
-        self.removepost = removepost
+    def __init__(self, subreddit='r/EscapefromTarkov', running=False, ignoremod=False, interval=30, action='report'):
+        super().__init__(running, ignoremod, interval)
+        self.action = action
         self.interval = interval
+        self.subreddit = subreddit
 
-    async def run(self, running):
+    async def run(self, running, subreddit):
         self.running = running
+        removalreason = "Limit posting of linked content to once every 48 hours. Rule 5 applies  " \
+                        "to whether or not you made the content you’re submitting. \n\n"
+        subredditstring = f'r/{subreddit}'
+
         if self.running:
+            randhello = random.choice(self.hellomsg)
             newids = BoundedSet(100)  # PRAW set functionality.  Creates a set and boots out old data as needed.
-            urlmatch = ["youtube.com", "twitch.tv"]
+            urlmatch = ["youtube.com", "twitch.tv", "youtu.be"]
             while True:  # Create a loop so we can exit out of this via Discord command
-                print("Checking subreddit for R5 submissions")
-                submissions = self.redditauth.subreddit(self.subreddit).new(limit=15)  # Grab the newest 15 submissions
-                startruntime = datetime.datetime.utcnow()  # Establish current run time to compare 2 day cutoff date to
-                delta = datetime.timedelta(days=2)
-                timecutoff = startruntime - delta
-                for submission in submissions:  # Loop through each subreddit submission
-                    if submission.id in newids:  # Checks to see if our item is in the set we've built
-                        # print(f'Submission:{submission.title}  is in newids, lets skip it')
-                        continue  # It has found a match, so continue to the next submission in the for loop
-                    # print(f'Submission:{submission.title} isn\'t in new IDs, so lets add it.')
-                    newids.add(submission.id)  # We haven't found a match above, so add it to the BoundedSet for next time
-                    for url in urlmatch:  # Loop through youtube & twitch to see if we've got youtube/twitch submissions
-                        if url in submission.url:  # Finds a match
-                            # print('Found a youtube/twitch link')
-                            subauthor = submission.author  # Grabs the author.  We want to check their history
-                            # Create a user object and check their post history
-                            # print(f'Checking history of {subauthor}')
-                            for userhistory in self.redditauth.redditor(str(subauthor)).submissions.new(limit=10):
-                                # Checks to see if a submission has been removed, if so we want to ignore it
-                                try:
-                                    if userhistory.removed is True:
-                                        continue  # The post has been removed, continue on to next submission
-                                except:
-                                    pass  # The post has not been removed, so we want to move on to the rest of the script
-                                # Checks to see if submissions are in our subreddit
-                                # If they are, make sure the domain matches twitch or youtube
-                                if userhistory.subreddit_name_prefixed == f'r/{self.subreddit}' and userhistory.domain == 'twitch.tv' or userhistory.domain == 'youtube.com':
-                                    # print('Found a potential match in the sub')
-                                    # Make sure that our 2 day cutoff is observed.
-                                    # We also want to make sure we're not matching against the original submission.
-                                    # Compare history with our original permalink
-                                    if timecutoff < datetime.datetime.fromtimestamp(userhistory.created_utc) and userhistory.permalink != submission.permalink:
-                                        # print("match found!", userhistory.subreddit_name_prefixed, userhistory.domain,
-                                        #       userhistory.permalink,
-                                        #       datetime.datetime.fromtimestamp(userhistory.created_utc), "| Taking action on the post")
-                                        #  Do things like report the post
-                                        if self.removepost.lower() == 'remove':  # Checks to see if we want to remove the post
-                                            print('Found one, going to remove the post and leave a message.')
-                                            randhello = random.choice(self.hellomsg)
-                                            bodymsg = f'{randhello},\n\nLimit posting of your own linked content to one (1) video ' \
-                                                      f'every two (2) days.  Those excessively posting their own content must ' \
-                                                      f'contribute to the subreddit in other ways outside of ' \
-                                                      f'their own video posts.  [Your recent post](https://reddit.com{submission.permalink}) has ' \
-                                                      f'been removed for violating this rule.'
-                                            footermsg = f'***\n\n*I am a bot, and this post was generated automatically. ' \
-                                                        f'If you believe this was done in error, please contact the ' \
-                                                        f'[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT ' \
-                                                        f'error&message=I\'m writing to you about the following submission: https://reddit.com{submission.permalink} ' \
-                                                        f'%0D%0D ShturmanBOT has removed my post by mistake)*'
-                                            commentremovalmsg = bodymsg + footermsg
-                                            submission.mod.remove(spam=False, mod_note="No flair", reason_id=None)
-                                            submission.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')
-                                        else:  # If we don't have post removal set, then we want to report the post.
-                                            print('Found one, reporting the post')
-                                            submission.report("R5 violation check!")
-                print(f'Finished R5 checking, sleeping for {self.interval}')
-                await asyncio.sleep(self.interval)
+                nettest = False
+                while not nettest:
+                    try:
+                        print(f"Checking new submissions.")
+                        for post in redditauth.subreddit(subreddit).new(limit=10):
+                            if post.permalink in newids:  # Checks to see if our item is in the set we've built
+                                continue  # It has found a match, so continue to the next submission in the for loop
+                            print(f'Submission:{post.title} isn\'t in new IDs, so lets add it and then check it.')
+                            newids.add(
+                                post.permalink)  # We haven't found a match above, so add it to the BoundedSet for next time
+                            for url in urlmatch:  # Loop through youtube & twitch to see if we've got youtube/twitch submissions
+                                if url in post.url:  # Finds a match
+                                    caughtpost = post.permalink  # Store post in a variable so we can make sure we're not catching it later.
+                                    print(f'Found a youtube/twitch link: {post.title}')
+                                    subauthor = post.author  # Grabs the author.  We want to check their history.
+                                    # Grabs the time of the post.
+                                    oppostime = datetime.datetime.fromtimestamp(post.created_utc)
+                                    delta = datetime.timedelta(days=2)
+                                    timecutoff = oppostime - delta
+                                    # Create a user object and check their post history
+                                    print(f'Checking the history of {subauthor}')
+                                    for userhistory in redditauth.redditor(str(subauthor)).submissions.new(limit=10):
+                                        # Checks to see if a submission has been removed, if so we want to ignore it
+                                        try:
+                                            if userhistory.removed is True:
+                                                continue  # The post has been removed, continue on to next submission
+                                        except:
+                                            pass  # The post has not been removed, so we want to move on to the rest of the script
+                                        # Checks post time to make sure we're not going too far back and doing excess checking.
+                                        historyposttime = datetime.datetime.fromtimestamp(userhistory.created_utc)
+                                        print(f'Checking post:"{userhistory.title}"')
+                                        print(f'Is post time: {historyposttime} between the cutoff: {timecutoff} and now?')
+                                        if datetime.datetime.fromtimestamp(userhistory.created_utc) < timecutoff:
+                                            print(f'Outside our time window, stopping.')
+                                            break
+                                        # Checks to see if submissions are in our subreddit
+                                        # If they are, make sure the domain matches twitch or youtube
+                                        if str(userhistory.subreddit_name_prefixed) == str(subredditstring) and userhistory.domain in urlmatch:
+                                            print(f'Found a potential match in the {subreddit}, checking if it is the OP')
+                                            # We want to make sure we're not matching against the original submission.
+                                            if userhistory.permalink != caughtpost:
+                                                print(f'We found a match: "{userhistory.title}"')
+                                                #  Do things like report the post
+                                                if self.action == 'remove':  # Checks to see if we want to remove the post
+                                                    print('Found one, going to remove the post and leave a message.')
+                                                    greeting = "{0} {1}! \n\n".format(randhello, post.author)
+                                                    footermsg = "***\n\n*I am a bot, and this post was generated automatically. If you believe this was done in error, please contact the " \
+                                                                "[mod team](https://www\.reddit\.com/message/compose?to=%2Fr%2FEscapefromTarkov&subject=ShturmanBOT " \
+                                                                "error&message=I'm writing to you about the following submission: https://reddit.com{0}. " \
+                                                                "%0D%0D ShturmanBOT has removed my post by mistake)*".format(post.permalink)
+                                                    commentremovalmsg = greeting + removalreason + footermsg  # Construct removal message
+                                                    post.mod.remove(spam=False, mod_note="No flair", reason_id=None)  # Remove the post
+                                                    post.mod.send_removal_message(commentremovalmsg, title='ignored', type='public')  # Send message
+
+                                                else:  # If we don't have post removal set, then we want to report the post.
+                                                    print(f'Reporting the post: "{post.title}"')
+                                                    post.report(f'R5 violation check!: {userhistory.id}')
+                                                    break
+                                            else:
+                                                print(f'"{userhistory.title}" is the OP, skipping it')
+                                        else:
+                                            print(f'"{userhistory.title}" is not a media link or within the sub.')
+                            print("\n")
+                        print("Finished searching, sleeping for 30 seconds")
+                        nettest = True
+                        await asyncio.sleep(self.interval)
+                    except:
+                        print(f'FHB couldn\'t connect || Trying again in 5s')
+                        await asyncio.sleep(5)
         elif not self.running:
             print(f'Running Media Spam Checker:{self.running} on {self.subreddit} with an interval of {self.interval}. Ignoring mod posts is set to:{self.ignoremod}')
