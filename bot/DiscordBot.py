@@ -4,7 +4,7 @@ import discord
 from discord.ext import commands
 from bot import shturclass
 from bot import reddit
-from bot import flairhelperbot, dupe_mod_log, media_spam
+from bot import flairhelperbot, dupe_mod_log, media_spam, quewatch
 
 
 intents = discord.Intents.default()  # This sets up the new intentions in 1.5
@@ -15,7 +15,8 @@ moduleset = {'fhb', 'mediaspam'}
 fhbloop = ''
 medialoop = ''
 dmlloop = ''
-subredditmod = 'EFTDesign'
+quewatchloop = ''
+subredditmod = 'EscapeFromTarkov'
 
 #########################################################################################################
 # Discord bot events
@@ -34,11 +35,17 @@ async def on_ready():
 #########################################################################################################
 
 
-@client.command()
+@client.command(aliases=['hi', 'yo'])
 async def hello(ctx):
     randhello = random.choice(shturclass.Shturclass.hellomsg)
     randmsg = random.choice(shturclass.Shturclass.saymsg)
     await ctx.send(f'{randhello} {ctx.author.mention}! {randmsg}')
+
+
+@client.command(aliases=['goodbye', 'later', 'cya'])
+async def bye(ctx):
+    randbye = random.choice(shturclass.Shturclass.byemsg)
+    await ctx.send(f'{randbye}, {ctx.author.mention}!')
 
 
 @client.command()
@@ -78,7 +85,7 @@ async def fhb(ctx, runprgm, ignoremods='True', interval=30):
 
 
 @client.command()  # Command to turn on / off the media spam checker
-async def mediaspam(ctx, runprgm, ignoremod='', interval=30, removepost=''):
+async def mediaspam(ctx, runprgm, ignoremod='', interval=30, action=''):
     global medialoop
     randhello = random.choice(shturclass.Shturclass.hellomsg)
     person = ctx.author.mention
@@ -94,9 +101,9 @@ async def mediaspam(ctx, runprgm, ignoremod='', interval=30, removepost=''):
         else:
             try:
                 interval = int(interval)  # Validate if a number was entered
-                if (runprgm.lower() == 'start') and (ignoremod.lower() == 'true' or ignoremod.lower() == 'false') and (isinstance(interval, int) and (removepost.lower() == 'report' or removepost.lower() == 'remove')):
-                    msstart = media_spam.MediaSpam(subredditmod, running=False, ignoremod=ignoremod.capitalize(), interval=interval, removepost=removepost.capitalize())  # Create the mediaspam object to do stuff with
-                    await ctx.send(f'{randhello} {person}!  I will now watch for media being spammed to the sub, {msstart.subreddit} and will {removepost} them.')
+                if (runprgm.lower() == 'start') and (ignoremod.lower() == 'true' or ignoremod.lower() == 'false') and (isinstance(interval, int) and (action.lower() == 'report' or action.lower() == 'remove')):
+                    msstart = media_spam.MediaSpam(subredditmod, running=False, ignoremod=ignoremod.capitalize(), interval=interval, action=action.capitalize())  # Create the mediaspam object to do stuff with
+                    await ctx.send(f'{randhello} {person}!  I will now watch for media being spammed to the sub, {msstart.subreddit} and will {action} them.')
                     medialoop = asyncio.create_task(msstart.run(True))  # Have to do the create_task, otherwise we can't cancel it later
                     await medialoop
                 else:
@@ -166,6 +173,36 @@ async def removemod(ctx, module, moderator):
         if module.lower() == 'mediaspam':
             media_spam.MediaSpam.remove_mod(moderator)
             await ctx.send(f'{randhello} {person}!  I\'ve removed {moderator}s permissions to {module}.')
+
+
+@client.command()
+async def watchque(ctx, runprgm, interval=30):
+    guild = client.get_guild(340973813238071298)  # Reddit Mod server guild
+    mqchannel = client.get_channel(820867845163450399)  # Probo mod channel
+    modmention = guild.get_role(386999610117324800)  # Moderator Role ID
+    probomention = guild.get_role(386999654694256651)  # Probo Mod Role ID
+
+    while True:
+        print("Starting loop")
+        modqueue = reddit.reddit_auth().subreddit('EscapefromTarkov').mod.modqueue(limit=None)
+        unmodded = reddit.reddit_auth().subreddit('EscapefromTarkov').mod.unmoderated(limit=None)
+        mqcounter = 0
+        umcounter = 0
+        for item in modqueue:
+            mqcounter += 1
+        for item in unmodded:
+            umcounter += 1
+
+        print("modqueue is: ", mqcounter)
+        print("unmodded is: ", umcounter)
+        discordactivity = f"MQ:{mqcounter} UM:{umcounter}"
+        activity = discord.Activity(name=discordactivity, type=discord.ActivityType.watching)
+        if mqcounter >= 25:
+            await mqchannel.send(f"\n{modmention.mention}\n{probomention.mention}, the MQ is over 25!")
+        if umcounter >= 25:
+            await mqchannel.send(f"\n{modmention.mention}\n{probomention.mention}, the UM is over 25!")
+        await client.change_presence(activity=activity)
+        await asyncio.sleep(interval)
 
 
 @client.command()
